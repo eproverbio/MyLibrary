@@ -4,6 +4,8 @@ import {
   Alert,
   Animated,
   Easing,
+  Image,
+  ImageBackground,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -24,6 +26,22 @@ const emptyDraft = {
   author: "",
   notes: "",
 };
+
+const homeBackgroundImage = require("./assets/ui/home-background.png");
+const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
+const isHomeBackgroundAnimationEnabled = false;
+const homeAnimationFrames = [
+  require("./assets/ui/home-animation/frame-01.png"),
+  require("./assets/ui/home-animation/frame-02.png"),
+  require("./assets/ui/home-animation/frame-03.png"),
+  require("./assets/ui/home-animation/frame-04.png"),
+  require("./assets/ui/home-animation/frame-05.png"),
+  require("./assets/ui/home-animation/frame-06.png"),
+  require("./assets/ui/home-animation/frame-07.png"),
+  require("./assets/ui/home-animation/frame-08.png"),
+  require("./assets/ui/home-animation/frame-09.png"),
+  require("./assets/ui/home-animation/frame-10.png"),
+];
 
 const futureAssets = {
   homeBackground: "assets/ui/home-background.png",
@@ -121,6 +139,7 @@ function SecondaryScreen({
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
+  const [homeFrameIndex, setHomeFrameIndex] = useState(0);
   const [expandedButtons, setExpandedButtons] = useState({
     vault: false,
     manual: false,
@@ -179,6 +198,18 @@ export default function App() {
     }
   }, [screen]);
 
+  useEffect(() => {
+    if (screen !== "home" || !isHomeBackgroundAnimationEnabled) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setHomeFrameIndex((current) => (current + 1) % homeAnimationFrames.length);
+    }, 120);
+
+    return () => clearInterval(intervalId);
+  }, [screen]);
+
   async function handleAddBook() {
     if (!draft.title.trim() || !draft.author.trim()) {
       Alert.alert("Missing data", "Please add at least a title and an author.");
@@ -215,35 +246,48 @@ export default function App() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" />
-        <Pressable style={styles.homeBackground} onPress={collapseHomeButtons}>
-          <View style={styles.homeOverlay} />
-          <View style={styles.homeContent}>
+        <ImageBackground
+          source={homeBackgroundImage}
+          resizeMode="cover"
+          style={styles.homeBackground}
+        >
+          {isHomeBackgroundAnimationEnabled ? (
+            <Image
+              source={homeAnimationFrames[homeFrameIndex]}
+              resizeMode="cover"
+              style={styles.homeAnimationFrame}
+            />
+          ) : null}
+          <Pressable style={styles.homeTouchLayer} onPress={collapseHomeButtons}>
+            <View style={styles.homeOverlay} />
+            <View style={styles.homeContent}>
             <View style={styles.brandWrap}>
-              <Text style={styles.brandTitle}>MyLibrary</Text>
+              <Image source={homeLogoImage} resizeMode="contain" style={styles.brandLogo} />
             </View>
 
-            <View style={styles.menuStack}>
-              <MenuButton
-                isExpanded={expandedButtons.vault}
-                label="The Vault"
-                tint="rgba(191, 219, 254, 0.45)"
-                onPress={() => handleHomeButtonPress("vault")}
-              />
-              <MenuButton
-                isExpanded={expandedButtons.manual}
-                label="Manual"
-                tint="rgba(196, 181, 253, 0.45)"
-                onPress={() => handleHomeButtonPress("manual")}
-              />
-              <MenuButton
-                isExpanded={expandedButtons.look}
-                label="Look"
-                tint="rgba(253, 230, 138, 0.45)"
-                onPress={() => handleHomeButtonPress("look")}
-              />
+              <View style={styles.menuStack}>
+                <MenuButton
+                  isExpanded={expandedButtons.vault}
+                  label="The Vault"
+                  tint="rgba(191, 219, 254, 0.45)"
+                  onPress={() => handleHomeButtonPress("vault")}
+                />
+                <MenuButton
+                  isExpanded={expandedButtons.manual}
+                  label="Manual"
+                  tint="rgba(196, 181, 253, 0.45)"
+                  onPress={() => handleHomeButtonPress("manual")}
+                />
+                <MenuButton
+                  isExpanded={expandedButtons.look}
+                  label="Look"
+                  tint="rgba(253, 230, 138, 0.45)"
+                  onPress={() => handleHomeButtonPress("look")}
+                />
+              </View>
             </View>
-          </View>
-        </Pressable>
+          </Pressable>
+        </ImageBackground>
       </SafeAreaView>
     );
   }
@@ -348,7 +392,12 @@ const styles = StyleSheet.create({
   },
   homeBackground: {
     flex: 1,
-    backgroundColor: "#120E09",
+  },
+  homeTouchLayer: {
+    flex: 1,
+  },
+  homeAnimationFrame: {
+    ...StyleSheet.absoluteFillObject,
   },
   homeOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -371,6 +420,10 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1.4,
     textAlign: "right",
+  },
+  brandLogo: {
+    width: 250,
+    height: 120,
   },
   menuStack: {
     marginTop: 320,

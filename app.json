@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "MyLibrary",
+    "slug": "mylibrary",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "mylibrary",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android"],
+    "plugins": [],
+    "assetBundlePatterns": ["**/*"]
+  }
+}

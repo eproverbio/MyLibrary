@@ -297,8 +297,8 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   menuStack: {
-    marginTop: 280,
-    gap: 10,
+    marginTop: 320,
+    gap: 40,
     alignItems: "flex-start",
   },
   menuButton: {

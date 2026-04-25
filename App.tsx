@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -31,19 +33,53 @@ const futureAssets = {
 };
 
 type MenuButtonProps = {
+  isExpanded: boolean;
   label: string;
   onPress: () => void;
   tint: string;
 };
 
-function MenuButton({ label, onPress, tint }: MenuButtonProps) {
+function MenuButton({ isExpanded, label, onPress, tint }: MenuButtonProps) {
+  const animation = useRef(new Animated.Value(isExpanded ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(animation, {
+      toValue: isExpanded ? 1 : 0,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [animation, isExpanded]);
+
   return (
-    <Pressable onPress={onPress} style={[styles.menuButton, { borderColor: tint }]}>
-      <View style={[styles.menuButtonGlow, { backgroundColor: tint }]} />
-      <View style={styles.menuButtonOverlay}>
-        <Text style={styles.menuLabel}>{label}</Text>
-      </View>
-    </Pressable>
+    <View style={styles.menuRow}>
+      <Pressable onPress={onPress} style={[styles.menuButton, { borderColor: tint }]}>
+        <View style={[styles.menuButtonGlow, { backgroundColor: tint }]} />
+        <View style={styles.menuButtonOverlay} />
+      </Pressable>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.menuFloatingLabelWrap,
+          {
+            opacity: animation,
+            transform: [
+              {
+                translateX: animation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-18, 0],
+                }),
+              },
+            ],
+          },
+          !isExpanded && styles.menuFloatingLabelHidden,
+        ]}
+      >
+        <View style={styles.menuFloatingLabel}>
+          <Text style={styles.menuLabel}>{label}</Text>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -85,10 +121,41 @@ function SecondaryScreen({
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
+  const [expandedButtons, setExpandedButtons] = useState({
+    vault: false,
+    manual: false,
+    look: false,
+  });
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+
+  function collapseHomeButtons() {
+    setExpandedButtons((current) => {
+      if (!current.vault && !current.manual && !current.look) {
+        return current;
+      }
+
+      return {
+        vault: false,
+        manual: false,
+        look: false,
+      };
+    });
+  }
+
+  function handleHomeButtonPress(target: "vault" | "manual" | "look") {
+    if (expandedButtons[target]) {
+      setScreen(target);
+      return;
+    }
+
+    setExpandedButtons((current) => ({
+      ...current,
+      [target]: true,
+    }));
+  }
 
   async function refreshBooks() {
     try {
@@ -105,6 +172,12 @@ export default function App() {
   useEffect(() => {
     void refreshBooks();
   }, []);
+
+  useEffect(() => {
+    if (screen !== "home") {
+      collapseHomeButtons();
+    }
+  }, [screen]);
 
   async function handleAddBook() {
     if (!draft.title.trim() || !draft.author.trim()) {
@@ -142,7 +215,7 @@ export default function App() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" />
-        <View style={styles.homeBackground}>
+        <Pressable style={styles.homeBackground} onPress={collapseHomeButtons}>
           <View style={styles.homeOverlay} />
           <View style={styles.homeContent}>
             <View style={styles.brandWrap}>
@@ -151,23 +224,26 @@ export default function App() {
 
             <View style={styles.menuStack}>
               <MenuButton
+                isExpanded={expandedButtons.vault}
                 label="The Vault"
                 tint="rgba(191, 219, 254, 0.45)"
-                onPress={() => setScreen("vault")}
+                onPress={() => handleHomeButtonPress("vault")}
               />
               <MenuButton
+                isExpanded={expandedButtons.manual}
                 label="Manual"
                 tint="rgba(196, 181, 253, 0.45)"
-                onPress={() => setScreen("manual")}
+                onPress={() => handleHomeButtonPress("manual")}
               />
               <MenuButton
+                isExpanded={expandedButtons.look}
                 label="Look"
                 tint="rgba(253, 230, 138, 0.45)"
-                onPress={() => setScreen("look")}
+                onPress={() => handleHomeButtonPress("look")}
               />
             </View>
           </View>
-        </View>
+        </Pressable>
       </SafeAreaView>
     );
   }
@@ -301,6 +377,10 @@ const styles = StyleSheet.create({
     gap: 40,
     alignItems: "flex-start",
   },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   menuButton: {
     width: 72,
     minHeight: 72,
@@ -315,13 +395,27 @@ const styles = StyleSheet.create({
     opacity: 0.18,
   },
   menuButtonOverlay: {
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    flex: 1,
     backgroundColor: "rgba(16, 12, 8, 0.52)",
+  },
+  menuFloatingLabelWrap: {
+    marginLeft: 14,
+  },
+  menuFloatingLabelHidden: {
+    position: "absolute",
+    left: 86,
+  },
+  menuFloatingLabel: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(27, 20, 13, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
   },
   menuLabel: {
     color: "#FFF7EA",
-    fontSize: 13,
+    fontSize: 17,
     fontWeight: "700",
   },
   screenShell: {

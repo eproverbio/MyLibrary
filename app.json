@@ -7,7 +7,18 @@
     "scheme": "mylibrary",
     "userInterfaceStyle": "automatic",
     "platforms": ["ios", "android"],
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-navigation-bar",
+        {
+          "backgroundColor": "#100D08",
+          "barStyle": "light",
+          "borderColor": "#100D08",
+          "position": "relative",
+          "visibility": "visible"
+        }
+      ]
+    ],
     "assetBundlePatterns": ["**/*"]
   }
 }

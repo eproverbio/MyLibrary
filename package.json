@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "expo": "~54.0.33",
+    "expo-navigation-bar": "~5.0.10",
     "expo-sqlite": "^55.0.15",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",

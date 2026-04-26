@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import * as NavigationBar from "expo-navigation-bar";
 import {
   ActivityIndicator,
   Alert,
@@ -7,6 +8,7 @@ import {
   GestureResponderEvent,
   Image,
   ImageBackground,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -33,6 +35,7 @@ const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
 const isHomeLogoVisible = false;
 const isHomeBackgroundAnimationEnabled = false;
 const areHomeButtonsInitiallyVisible = false;
+const appChromeColor = "#100D08";
 const homeAnimationFrames = [
   require("./assets/ui/home-animation/frame-01.png"),
   require("./assets/ui/home-animation/frame-02.png"),
@@ -242,6 +245,16 @@ export default function App() {
 
   useEffect(() => {
     void refreshBooks();
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") {
+      return;
+    }
+
+    void NavigationBar.setBackgroundColorAsync(appChromeColor);
+    void NavigationBar.setBorderColorAsync(appChromeColor);
+    void NavigationBar.setButtonStyleAsync("light");
   }, []);
 
   useEffect(() => {
@@ -459,7 +472,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#100D08",
+    backgroundColor: appChromeColor,
   },
   homeBackground: {
     flex: 1,

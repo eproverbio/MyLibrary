@@ -14,10 +14,10 @@
       [
         "expo-navigation-bar",
         {
-          "backgroundColor": "#100D08",
+          "backgroundColor": "#00000000",
           "barStyle": "light",
-          "borderColor": "#100D08",
-          "position": "relative",
+          "borderColor": "#00000000",
+          "position": "absolute",
           "visibility": "visible"
         }
       ],

@@ -17,6 +17,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { BookCard } from "./src/components/BookCard";
@@ -176,6 +177,7 @@ function SecondaryScreen({
 }
 
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>("home");
   const [areHomeButtonsVisible, setAreHomeButtonsVisible] = useState(
     areHomeButtonsInitiallyVisible
@@ -284,10 +286,25 @@ export default function App() {
       return;
     }
 
-    void NavigationBar.setBackgroundColorAsync(appChromeColor);
-    void NavigationBar.setBorderColorAsync(appChromeColor);
-    void NavigationBar.setButtonStyleAsync("light");
-  }, []);
+    async function syncNavigationBar() {
+      await NavigationBar.setButtonStyleAsync("light");
+
+      if (screen === "home") {
+        await NavigationBar.setPositionAsync("absolute");
+        await NavigationBar.setBackgroundColorAsync("#00000000");
+        await NavigationBar.setBorderColorAsync("#00000000");
+        await NavigationBar.setVisibilityAsync("hidden");
+        return;
+      }
+
+      await NavigationBar.setVisibilityAsync("visible");
+      await NavigationBar.setPositionAsync("relative");
+      await NavigationBar.setBackgroundColorAsync(appChromeColor);
+      await NavigationBar.setBorderColorAsync(appChromeColor);
+    }
+
+    void syncNavigationBar();
+  }, [screen]);
 
   useEffect(() => {
     if (screen !== "home") {
@@ -360,12 +377,13 @@ export default function App() {
     };
 
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="light-content" />
+      <View style={styles.homeScreen}>
+        <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
         <ImageBackground
           source={homeBackgroundImage}
           resizeMode="cover"
           style={styles.homeBackground}
+          imageStyle={[styles.homeBackgroundImage, { width: windowWidth + 40 }]}
         >
           {homeBackgroundMode === "video" ? (
             <HomeVideoBackground source={homeBackgroundVideoSource} />
@@ -411,7 +429,7 @@ export default function App() {
             </View>
           </Pressable>
         </ImageBackground>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -513,8 +531,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: appChromeColor,
   },
+  homeScreen: {
+    flex: 1,
+    backgroundColor: appChromeColor,
+  },
   homeBackground: {
     flex: 1,
+  },
+  homeBackgroundImage: {
+    left: -40,
   },
   homeTouchLayer: {
     flex: 1,

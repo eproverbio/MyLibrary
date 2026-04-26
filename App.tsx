@@ -29,6 +29,7 @@ const emptyDraft = {
 
 const homeBackgroundImage = require("./assets/ui/home-background.png");
 const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
+const isHomeLogoVisible = false;
 const isHomeBackgroundAnimationEnabled = false;
 const homeAnimationFrames = [
   require("./assets/ui/home-animation/frame-01.png"),
@@ -262,7 +263,9 @@ export default function App() {
             <View style={styles.homeOverlay} />
             <View style={styles.homeContent}>
             <View style={styles.brandWrap}>
-              <Image source={homeLogoImage} resizeMode="contain" style={styles.brandLogo} />
+              {isHomeLogoVisible ? (
+                <Image source={homeLogoImage} resizeMode="contain" style={styles.brandLogo} />
+              ) : null}
             </View>
 
               <View style={styles.menuStack}>

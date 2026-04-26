@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   Easing,
+  GestureResponderEvent,
   Image,
   ImageBackground,
   Pressable,
@@ -31,6 +32,7 @@ const homeBackgroundImage = require("./assets/ui/home-background.png");
 const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
 const isHomeLogoVisible = false;
 const isHomeBackgroundAnimationEnabled = false;
+const areHomeButtonsInitiallyVisible = false;
 const homeAnimationFrames = [
   require("./assets/ui/home-animation/frame-01.png"),
   require("./assets/ui/home-animation/frame-02.png"),
@@ -54,7 +56,7 @@ const futureAssets = {
 type MenuButtonProps = {
   isExpanded: boolean;
   label: string;
-  onPress: () => void;
+  onPress: (event: GestureResponderEvent) => void;
   tint: string;
 };
 
@@ -140,6 +142,12 @@ function SecondaryScreen({
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
+  const [areHomeButtonsVisible, setAreHomeButtonsVisible] = useState(
+    areHomeButtonsInitiallyVisible
+  );
+  const [areHomeButtonsRendered, setAreHomeButtonsRendered] = useState(
+    areHomeButtonsInitiallyVisible
+  );
   const [homeFrameIndex, setHomeFrameIndex] = useState(0);
   const [expandedButtons, setExpandedButtons] = useState({
     vault: false,
@@ -150,6 +158,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const homeButtonsAnimation = useRef(
+    new Animated.Value(areHomeButtonsInitiallyVisible ? 1 : 0)
+  ).current;
 
   function collapseHomeButtons() {
     setExpandedButtons((current) => {
@@ -165,7 +176,47 @@ export default function App() {
     });
   }
 
-  function handleHomeButtonPress(target: "vault" | "manual" | "look") {
+  function hideHomeButtons() {
+    if (!areHomeButtonsVisible && !areHomeButtonsRendered) {
+      return;
+    }
+
+    collapseHomeButtons();
+    setAreHomeButtonsVisible(false);
+    Animated.timing(homeButtonsAnimation, {
+      toValue: 0,
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setAreHomeButtonsRendered(false);
+      }
+    });
+  }
+
+  function handleHomeBackgroundPress() {
+    if (areHomeButtonsVisible) {
+      hideHomeButtons();
+      return;
+    }
+
+    setAreHomeButtonsRendered(true);
+    setAreHomeButtonsVisible(true);
+    Animated.timing(homeButtonsAnimation, {
+      toValue: 1,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function handleHomeButtonPress(
+    target: "vault" | "manual" | "look",
+    event: GestureResponderEvent
+  ) {
+    event.stopPropagation();
+
     if (expandedButtons[target]) {
       setScreen(target);
       return;
@@ -195,7 +246,7 @@ export default function App() {
 
   useEffect(() => {
     if (screen !== "home") {
-      collapseHomeButtons();
+      hideHomeButtons();
     }
   }, [screen]);
 
@@ -244,6 +295,21 @@ export default function App() {
   }
 
   if (screen === "home") {
+    const menuStackAnimatedStyle = {
+      opacity: homeButtonsAnimation.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 1],
+      }),
+      transform: [
+        {
+          translateX: homeButtonsAnimation.interpolate({
+            inputRange: [0, 1],
+            outputRange: [-140, 0],
+          }),
+        },
+      ],
+    };
+
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" />
@@ -259,35 +325,37 @@ export default function App() {
               style={styles.homeAnimationFrame}
             />
           ) : null}
-          <Pressable style={styles.homeTouchLayer} onPress={collapseHomeButtons}>
+          <Pressable style={styles.homeTouchLayer} onPress={handleHomeBackgroundPress}>
             <View style={styles.homeOverlay} />
             <View style={styles.homeContent}>
-            <View style={styles.brandWrap}>
-              {isHomeLogoVisible ? (
-                <Image source={homeLogoImage} resizeMode="contain" style={styles.brandLogo} />
-              ) : null}
-            </View>
-
-              <View style={styles.menuStack}>
-                <MenuButton
-                  isExpanded={expandedButtons.vault}
-                  label="The Vault"
-                  tint="rgba(191, 219, 254, 0.45)"
-                  onPress={() => handleHomeButtonPress("vault")}
-                />
-                <MenuButton
-                  isExpanded={expandedButtons.manual}
-                  label="Manual"
-                  tint="rgba(196, 181, 253, 0.45)"
-                  onPress={() => handleHomeButtonPress("manual")}
-                />
-                <MenuButton
-                  isExpanded={expandedButtons.look}
-                  label="Look"
-                  tint="rgba(253, 230, 138, 0.45)"
-                  onPress={() => handleHomeButtonPress("look")}
-                />
+              <View style={styles.brandWrap}>
+                {isHomeLogoVisible ? (
+                  <Image source={homeLogoImage} resizeMode="contain" style={styles.brandLogo} />
+                ) : null}
               </View>
+
+              {areHomeButtonsRendered ? (
+                <Animated.View style={[styles.menuStack, menuStackAnimatedStyle]}>
+                  <MenuButton
+                    isExpanded={expandedButtons.vault}
+                    label="The Vault"
+                    tint="rgba(191, 219, 254, 0.45)"
+                    onPress={(event) => handleHomeButtonPress("vault", event)}
+                  />
+                  <MenuButton
+                    isExpanded={expandedButtons.manual}
+                    label="Manual"
+                    tint="rgba(196, 181, 253, 0.45)"
+                    onPress={(event) => handleHomeButtonPress("manual", event)}
+                  />
+                  <MenuButton
+                    isExpanded={expandedButtons.look}
+                    label="Look"
+                    tint="rgba(253, 230, 138, 0.45)"
+                    onPress={(event) => handleHomeButtonPress("look", event)}
+                  />
+                </Animated.View>
+              ) : null}
             </View>
           </Pressable>
         </ImageBackground>

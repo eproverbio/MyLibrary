@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as NavigationBar from "expo-navigation-bar";
+import { useVideoPlayer, VideoView } from "expo-video";
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +24,7 @@ import { createBook, fetchBooks, removeBook } from "./src/services/books";
 import type { Book } from "./src/types/book";
 
 type Screen = "home" | "vault" | "manual" | "look";
+type HomeBackgroundMode = "image" | "frames" | "video";
 
 const emptyDraft = {
   title: "",
@@ -33,9 +35,12 @@ const emptyDraft = {
 const homeBackgroundImage = require("./assets/ui/home-background.png");
 const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
 const isHomeLogoVisible = false;
+const homeBackgroundMode: HomeBackgroundMode = "image";
 const isHomeBackgroundAnimationEnabled = false;
 const areHomeButtonsInitiallyVisible = false;
 const appChromeColor = "#100D08";
+const homeBackgroundVideoAssetPath = "assets/ui/home-video/home-background-loop.mp4";
+const homeBackgroundVideoSource: number | null = null;
 const homeAnimationFrames = [
   require("./assets/ui/home-animation/frame-01.png"),
   require("./assets/ui/home-animation/frame-02.png"),
@@ -51,10 +56,37 @@ const homeAnimationFrames = [
 
 const futureAssets = {
   homeBackground: "assets/ui/home-background.png",
+  homeBackgroundVideo: homeBackgroundVideoAssetPath,
   vaultButton: "assets/ui/button-vault.png",
   manualButton: "assets/ui/button-manual.png",
   lookButton: "assets/ui/button-look.png",
 };
+
+type HomeVideoBackgroundProps = {
+  source: number | null;
+};
+
+function HomeVideoBackground({ source }: HomeVideoBackgroundProps) {
+  if (!source) {
+    return null;
+  }
+
+  const player = useVideoPlayer(source, (videoPlayer) => {
+    videoPlayer.muted = true;
+    videoPlayer.loop = true;
+    videoPlayer.play();
+  });
+
+  return (
+    <VideoView
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+      allowsFullscreen={false}
+      style={styles.homeVideoBackground}
+    />
+  );
+}
 
 type MenuButtonProps = {
   isExpanded: boolean;
@@ -264,7 +296,11 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (screen !== "home" || !isHomeBackgroundAnimationEnabled) {
+    if (
+      screen !== "home" ||
+      homeBackgroundMode !== "frames" ||
+      !isHomeBackgroundAnimationEnabled
+    ) {
       return;
     }
 
@@ -331,7 +367,10 @@ export default function App() {
           resizeMode="cover"
           style={styles.homeBackground}
         >
-          {isHomeBackgroundAnimationEnabled ? (
+          {homeBackgroundMode === "video" ? (
+            <HomeVideoBackground source={homeBackgroundVideoSource} />
+          ) : null}
+          {homeBackgroundMode === "frames" && isHomeBackgroundAnimationEnabled ? (
             <Image
               source={homeAnimationFrames[homeFrameIndex]}
               resizeMode="cover"
@@ -483,6 +522,9 @@ const styles = StyleSheet.create({
   homeAnimationFrame: {
     ...StyleSheet.absoluteFillObject,
   },
+  homeVideoBackground: {
+    ...StyleSheet.absoluteFillObject,
+  },
   homeOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(7, 5, 3, 0.45)",
@@ -510,7 +552,7 @@ const styles = StyleSheet.create({
     height: 120,
   },
   menuStack: {
-    marginTop: 320,
+    marginTop: 400,
     gap: 40,
     alignItems: "flex-start",
   },

@@ -10,6 +10,8 @@ The `books` table contains:
 - `title`
 - `author`
 - `notes`
+- `status` with values `In progress`, `Read`, `Not Read`
+- `bookmark` optional, used for the last page reached when a book is in progress
 - `aiSummary` optional
 - `createdAt`
 

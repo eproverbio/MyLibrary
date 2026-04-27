@@ -9,9 +9,11 @@ import {
   GestureResponderEvent,
   Image,
   ImageBackground,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -21,18 +23,23 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { createBook, fetchBooks, removeBook } from "./src/services/books";
-import type { Book } from "./src/types/book";
+import type { RefreshControlProps } from "react-native";
+import { createBook, fetchBooks, removeBook, updateBook } from "./src/services/books";
+import type { Book, BookStatus } from "./src/types/book";
 
 type Screen = "home" | "vault" | "manual" | "ocr";
 type HomeBackgroundMode = "image" | "frames" | "video";
 type VaultSortKey = "title" | "author";
 type VaultSortDirection = "asc" | "desc";
 
+const bookStatusOptions: BookStatus[] = ["In progress", "Read", "Not Read"];
+
 const emptyDraft = {
   title: "",
   author: "",
   notes: "",
+  status: "Not Read" as BookStatus,
+  bookmark: "",
 };
 
 const homeBackgroundImage = require("./assets/ui/home-background.png");
@@ -148,6 +155,7 @@ type SecondaryScreenProps = {
   backPosition?: "top" | "bottom";
   stickyHeaderIndices?: number[];
   onScrollBeginDrag?: () => void;
+  refreshControl?: React.ReactElement<RefreshControlProps>;
   children: React.ReactNode;
 };
 
@@ -157,6 +165,7 @@ function SecondaryScreen({
   backPosition = "bottom",
   stickyHeaderIndices,
   onScrollBeginDrag,
+  refreshControl,
   children,
 }: SecondaryScreenProps) {
   const isBottomBackButton = backPosition === "bottom";
@@ -176,6 +185,7 @@ function SecondaryScreen({
           stickyHeaderIndices={stickyHeaderIndices}
           onScrollBeginDrag={onScrollBeginDrag}
           keyboardShouldPersistTaps="handled"
+          refreshControl={refreshControl}
         >
           {children}
         </ScrollView>
@@ -195,6 +205,7 @@ type SwipeableVaultRowProps = {
   isOpen: boolean;
   onOpen: (id: string | null) => void;
   onDelete: (id: string) => void;
+  onSelect: (book: Book) => void;
 };
 
 const vaultDeleteRevealWidth = 104;
@@ -202,12 +213,32 @@ const vaultSwipeOpenThreshold = 56;
 const vaultSwipeCloseThreshold = 36;
 const vaultSwipeVelocityThreshold = 0.35;
 
+function getBookmarkLabel(book: Book) {
+  if (book.status !== "In progress" || typeof book.bookmark !== "number") {
+    return "—";
+  }
+
+  return String(book.bookmark);
+}
+
+function getVaultStatusBadgeStyle(status: BookStatus) {
+  switch (status) {
+    case "In progress":
+      return styles.vaultStatusInProgress;
+    case "Read":
+      return styles.vaultStatusRead;
+    default:
+      return styles.vaultStatusNotRead;
+  }
+}
+
 function SwipeableVaultRow({
   book,
   isLast,
   isOpen,
   onOpen,
   onDelete,
+  onSelect,
 }: SwipeableVaultRowProps) {
   const translateX = useRef(new Animated.Value(isOpen ? -vaultDeleteRevealWidth : 0)).current;
 
@@ -266,17 +297,18 @@ function SwipeableVaultRow({
           { transform: [{ translateX }] },
         ]}
       >
-        <View style={styles.vaultTitleColumn}>
-          <Text style={styles.vaultCellPrimary}>{book.title}</Text>
-          {book.notes ? (
-            <Text numberOfLines={2} style={styles.vaultCellSecondary}>
-              {book.notes}
+        <Pressable onPress={() => onSelect(book)} style={styles.vaultRowPressable}>
+          <View style={styles.vaultTitleColumn}>
+            <Text numberOfLines={2} style={styles.vaultCellPrimary}>
+              {book.title}
             </Text>
-          ) : null}
-        </View>
-        <View style={styles.vaultAuthorColumn}>
-          <Text style={styles.vaultCellValue}>{book.author}</Text>
-        </View>
+          </View>
+          <View style={styles.vaultAuthorColumn}>
+            <Text numberOfLines={2} style={styles.vaultCellValue}>
+              {book.author}
+            </Text>
+          </View>
+        </Pressable>
       </Animated.View>
     </View>
   );
@@ -299,12 +331,17 @@ export default function App() {
   });
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshingVault, setRefreshingVault] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
   const [vaultSearch, setVaultSearch] = useState("");
   const [vaultSortKey, setVaultSortKey] = useState<VaultSortKey>("title");
   const [vaultSortDirection, setVaultSortDirection] = useState<VaultSortDirection>("asc");
   const [openVaultRowId, setOpenVaultRowId] = useState<string | null>(null);
+  const [selectedVaultBookId, setSelectedVaultBookId] = useState<string | null>(null);
+  const [isVaultModalEditing, setIsVaultModalEditing] = useState(false);
+  const [isVaultModalSaving, setIsVaultModalSaving] = useState(false);
+  const [vaultModalDraft, setVaultModalDraft] = useState(emptyDraft);
   const homeButtonsAnimation = useRef(
     new Animated.Value(areHomeButtonsInitiallyVisible ? 1 : 0)
   ).current;
@@ -375,18 +412,32 @@ export default function App() {
     }));
   }
 
-  async function refreshBooks() {
+  async function refreshBooks(options?: { showLoading?: boolean }) {
+    const showLoading = options?.showLoading ?? true;
+
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      } else {
+        setRefreshingVault(true);
+      }
+
       const nextBooks = await fetchBooks();
       setBooks(nextBooks);
       setOpenVaultRowId((current) =>
         nextBooks.some((book) => book.id === current) ? current : null
       );
+      setSelectedVaultBookId((current) =>
+        nextBooks.some((book) => book.id === current) ? current : null
+      );
     } catch (error) {
       Alert.alert("Database error", error instanceof Error ? error.message : "Unknown error");
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      } else {
+        setRefreshingVault(false);
+      }
     }
   }
 
@@ -448,12 +499,32 @@ export default function App() {
       return;
     }
 
+    if (draft.status === "In progress" && !draft.bookmark.trim()) {
+      Alert.alert("Missing bookmark", "Add the last page reached for books in progress.");
+      return;
+    }
+
+    const parsedBookmark =
+      draft.status === "In progress" && draft.bookmark.trim()
+        ? Number(draft.bookmark.trim())
+        : undefined;
+
+    if (
+      draft.status === "In progress" &&
+      (!Number.isFinite(parsedBookmark) || (parsedBookmark ?? 0) <= 0)
+    ) {
+      Alert.alert("Invalid bookmark", "Bookmark must be a page number greater than 0.");
+      return;
+    }
+
     try {
       setSaving(true);
       await createBook({
         title: draft.title.trim(),
         author: draft.author.trim(),
         notes: draft.notes.trim(),
+        status: draft.status,
+        bookmark: parsedBookmark,
       });
       setDraft(emptyDraft);
       await refreshBooks();
@@ -469,6 +540,8 @@ export default function App() {
     try {
       await removeBook(id);
       setOpenVaultRowId(null);
+      setSelectedVaultBookId((current) => (current === id ? null : current));
+      setIsVaultModalEditing(false);
       await refreshBooks();
     } catch (error) {
       Alert.alert("Delete failed", error instanceof Error ? error.message : "Unknown error");
@@ -519,6 +592,90 @@ export default function App() {
       return vaultSortDirection === "asc" ? comparison : -comparison;
     });
   const hasVisibleBooks = !loading && books.length > 0 && visibleBooks.length > 0;
+  const selectedVaultBook =
+    selectedVaultBookId !== null ? books.find((book) => book.id === selectedVaultBookId) ?? null : null;
+
+  useEffect(() => {
+    if (!selectedVaultBook) {
+      setVaultModalDraft(emptyDraft);
+      setIsVaultModalEditing(false);
+      return;
+    }
+
+    setVaultModalDraft({
+      title: selectedVaultBook.title,
+      author: selectedVaultBook.author,
+      notes: selectedVaultBook.notes,
+      status: selectedVaultBook.status,
+      bookmark:
+        selectedVaultBook.status === "In progress" && typeof selectedVaultBook.bookmark === "number"
+          ? String(selectedVaultBook.bookmark)
+          : "",
+    });
+  }, [selectedVaultBook]);
+
+  function openVaultBookModal(book: Book) {
+    setSelectedVaultBookId(book.id);
+    setIsVaultModalEditing(false);
+    setOpenVaultRowId(null);
+  }
+
+  function closeVaultBookModal() {
+    setSelectedVaultBookId(null);
+    setIsVaultModalEditing(false);
+    setIsVaultModalSaving(false);
+  }
+
+  async function handleVaultModalHammerPress() {
+    if (!selectedVaultBook) {
+      return;
+    }
+
+    if (!isVaultModalEditing) {
+      setIsVaultModalEditing(true);
+      return;
+    }
+
+    if (!vaultModalDraft.title.trim() || !vaultModalDraft.author.trim()) {
+      Alert.alert("Missing data", "Please add at least a title and an author.");
+      return;
+    }
+
+    if (vaultModalDraft.status === "In progress" && !vaultModalDraft.bookmark.trim()) {
+      Alert.alert("Missing bookmark", "Add the last page reached for books in progress.");
+      return;
+    }
+
+    const parsedBookmark =
+      vaultModalDraft.status === "In progress" && vaultModalDraft.bookmark.trim()
+        ? Number(vaultModalDraft.bookmark.trim())
+        : undefined;
+
+    if (
+      vaultModalDraft.status === "In progress" &&
+      (!Number.isFinite(parsedBookmark) || (parsedBookmark ?? 0) <= 0)
+    ) {
+      Alert.alert("Invalid bookmark", "Bookmark must be a page number greater than 0.");
+      return;
+    }
+
+    try {
+      setIsVaultModalSaving(true);
+      await updateBook(selectedVaultBook.id, {
+        title: vaultModalDraft.title.trim(),
+        author: vaultModalDraft.author.trim(),
+        notes: vaultModalDraft.notes.trim(),
+        status: vaultModalDraft.status,
+        bookmark: parsedBookmark,
+      });
+      await refreshBooks({ showLoading: false });
+      setIsVaultModalEditing(false);
+    } catch (error) {
+      Alert.alert("Update failed", error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setIsVaultModalSaving(false);
+    }
+  }
 
   if (screen === "home") {
     const menuStackAnimatedStyle = {
@@ -599,30 +756,52 @@ export default function App() {
     };
 
     return (
-      <SecondaryScreen
-        title="The Vault"
-        onBack={() => setScreen("home")}
-        backPosition="bottom"
-        stickyHeaderIndices={hasVisibleBooks ? [1, 2] : undefined}
-        onScrollBeginDrag={dismissOpenVaultRow}
-      >
-        <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-          <View style={styles.infoPanel}>
-            <Text style={styles.panelHeading}>Saved books</Text>
-            <Text style={styles.panelCopy}>
-              All your saved books live here. Pull the refresh button whenever you want to sync the
-              view with local SQLite.
-            </Text>
-            <Pressable onPress={refreshBooks} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonLabel}>Refresh</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-
-        {hasVisibleBooks ? (
+      <>
+        <SecondaryScreen
+          title="The Vault"
+          onBack={() => setScreen("home")}
+          backPosition="bottom"
+          stickyHeaderIndices={hasVisibleBooks ? [1, 2] : undefined}
+          onScrollBeginDrag={dismissOpenVaultRow}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshingVault}
+              onRefresh={() => void refreshBooks({ showLoading: false })}
+              tintColor="#E2C38B"
+            />
+          }
+        >
           <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.vaultToolbarWrap}>
+            <Text style={styles.vaultSubtitle}>All your saved books!</Text>
+          </Pressable>
+
+          {hasVisibleBooks ? (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+              <View style={styles.vaultToolbarWrap}>
+                <View style={styles.vaultToolbar}>
+                  <View style={styles.vaultToolbarHeader}>
+                    <Text style={styles.vaultResultCount}>
+                      {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
+                    </Text>
+                  </View>
+                  <TextInput
+                    value={vaultSearch}
+                    onChangeText={setVaultSearch}
+                    placeholder="Search by title or author"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultSearchInput}
+                  />
+                </View>
+              </View>
+            </Pressable>
+          ) : (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
               <View style={styles.vaultToolbar}>
+                <View style={styles.vaultToolbarHeader}>
+                  <Text style={styles.vaultResultCount}>
+                    {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
+                  </Text>
+                </View>
                 <TextInput
                   value={vaultSearch}
                   onChangeText={setVaultSearch}
@@ -630,112 +809,272 @@ export default function App() {
                   placeholderTextColor="#8E7C66"
                   style={styles.vaultSearchInput}
                 />
-                <Text style={styles.vaultResultCount}>
-                  {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
+              </View>
+            </Pressable>
+          )}
+
+          {hasVisibleBooks ? (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+              <View style={styles.vaultTableHeaderWrap}>
+                <View style={styles.vaultTableHeader}>
+                  <Pressable
+                    onPress={() => handleVaultSortChange("title")}
+                    style={[styles.vaultHeaderButton, styles.vaultTitleColumn]}
+                  >
+                    <View style={styles.vaultHeaderInner}>
+                      <Text
+                        style={[
+                          styles.vaultHeaderCell,
+                          vaultSortKey === "title" && styles.vaultHeaderCellActive,
+                        ]}
+                      >
+                        {getVaultSortLabel("title", "Title")}
+                      </Text>
+                      {getVaultSortArrow("title") ? (
+                        <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("title")}</Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleVaultSortChange("author")}
+                    style={[styles.vaultHeaderButton, styles.vaultAuthorColumn]}
+                  >
+                    <View style={styles.vaultHeaderInner}>
+                      <Text
+                        style={[
+                          styles.vaultHeaderCell,
+                          vaultSortKey === "author" && styles.vaultHeaderCellActive,
+                        ]}
+                      >
+                        {getVaultSortLabel("author", "Author")}
+                      </Text>
+                      {getVaultSortArrow("author") ? (
+                        <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("author")}</Text>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                </View>
+              </View>
+            </Pressable>
+          ) : null}
+
+          {loading ? (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+              <View style={styles.loadingBox}>
+                <ActivityIndicator color="#E2C38B" />
+                <Text style={styles.loadingText}>Loading from SQLite...</Text>
+              </View>
+            </Pressable>
+          ) : books.length === 0 ? (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+              <View style={styles.emptyPanel}>
+                <Text style={styles.emptyTitle}>The vault is empty.</Text>
+                <Text style={styles.emptyText}>
+                  Use Manual from the home screen to add your first book.
                 </Text>
               </View>
-            </View>
-          </Pressable>
-        ) : (
-          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.vaultToolbar}>
-              <TextInput
-                value={vaultSearch}
-                onChangeText={setVaultSearch}
-                placeholder="Search by title or author"
-                placeholderTextColor="#8E7C66"
-                style={styles.vaultSearchInput}
-              />
-              <Text style={styles.vaultResultCount}>
-                {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
-              </Text>
-            </View>
-          </Pressable>
-        )}
+            </Pressable>
+          ) : visibleBooks.length === 0 ? (
+            <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+              <View style={styles.emptyPanel}>
+                <Text style={styles.emptyTitle}>No matches found.</Text>
+                <Text style={styles.emptyText}>
+                  Try a different title or author in the search bar.
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
 
-        {hasVisibleBooks ? (
-          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.vaultTableHeaderWrap}>
-              <View style={styles.vaultTableHeader}>
-                <Pressable
-                  onPress={() => handleVaultSortChange("title")}
-                  style={[styles.vaultHeaderButton, styles.vaultTitleColumn]}
-                >
-                  <View style={styles.vaultHeaderInner}>
-                    <Text
-                      style={[
-                        styles.vaultHeaderCell,
-                        vaultSortKey === "title" && styles.vaultHeaderCellActive,
-                      ]}
-                    >
-                      {getVaultSortLabel("title", "Title")}
-                    </Text>
-                    {getVaultSortArrow("title") ? (
-                      <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("title")}</Text>
-                    ) : null}
-                  </View>
+          {hasVisibleBooks ? (
+            <View style={styles.vaultTableBody}>
+              {visibleBooks.map((book, index) => (
+                <SwipeableVaultRow
+                  key={book.id}
+                  book={book}
+                  isLast={index === visibleBooks.length - 1}
+                  isOpen={openVaultRowId === book.id}
+                  onOpen={setOpenVaultRowId}
+                  onDelete={handleDeleteBook}
+                  onSelect={openVaultBookModal}
+                />
+              ))}
+            </View>
+          ) : null}
+        </SecondaryScreen>
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={selectedVaultBook !== null}
+          onRequestClose={closeVaultBookModal}
+        >
+          <View style={styles.modalOverlay}>
+            <Pressable style={styles.modalBackdrop} onPress={closeVaultBookModal} />
+            <View style={styles.vaultModalCard}>
+              <View style={styles.vaultModalHeader}>
+                <Pressable onPress={closeVaultBookModal} style={styles.vaultModalIconButton}>
+                  <Text style={styles.vaultModalIconLabel}>{"<"}</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => handleVaultSortChange("author")}
-                  style={[styles.vaultHeaderButton, styles.vaultAuthorColumn]}
+                  onPress={() => void handleVaultModalHammerPress()}
+                  style={[styles.vaultModalIconButton, styles.vaultModalActionButton]}
+                  disabled={isVaultModalSaving}
                 >
-                  <View style={styles.vaultHeaderInner}>
-                    <Text
-                      style={[
-                        styles.vaultHeaderCell,
-                        vaultSortKey === "author" && styles.vaultHeaderCellActive,
-                      ]}
-                    >
-                      {getVaultSortLabel("author", "Author")}
-                    </Text>
-                    {getVaultSortArrow("author") ? (
-                      <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("author")}</Text>
-                    ) : null}
-                  </View>
+                  <Text style={styles.vaultModalHammerLabel}>
+                    {isVaultModalSaving ? "..." : isVaultModalEditing ? "Save" : "Edit"}
+                  </Text>
                 </Pressable>
               </View>
-            </View>
-          </Pressable>
-        ) : null}
 
-        {loading ? (
-          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.loadingBox}>
-              <ActivityIndicator color="#E2C38B" />
-              <Text style={styles.loadingText}>Loading from SQLite...</Text>
-            </View>
-          </Pressable>
-        ) : books.length === 0 ? (
-          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.emptyPanel}>
-              <Text style={styles.emptyTitle}>The vault is empty.</Text>
-              <Text style={styles.emptyText}>Use Manual from the home screen to add your first book.</Text>
-            </View>
-          </Pressable>
-        ) : visibleBooks.length === 0 ? (
-          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
-            <View style={styles.emptyPanel}>
-              <Text style={styles.emptyTitle}>No matches found.</Text>
-              <Text style={styles.emptyText}>Try a different title or author in the search bar.</Text>
-            </View>
-          </Pressable>
-        ) : null}
+              <ScrollView
+                style={styles.vaultModalBody}
+                contentContainerStyle={styles.vaultModalBodyContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                {selectedVaultBook ? (
+                  <View style={styles.vaultModalHero}>
+                    <Text style={styles.vaultModalEyebrow}>
+                      {isVaultModalEditing ? "Editing entry" : "Vault entry"}
+                    </Text>
+                    <Text style={styles.vaultModalTitle}>
+                      {isVaultModalEditing ? vaultModalDraft.title || "Untitled book" : selectedVaultBook.title}
+                    </Text>
+                    <Text style={styles.vaultModalAuthor}>
+                      {isVaultModalEditing ? vaultModalDraft.author || "Unknown author" : selectedVaultBook.author}
+                    </Text>
 
-        {hasVisibleBooks ? (
-          <View style={styles.vaultTableBody}>
-            {visibleBooks.map((book, index) => (
-              <SwipeableVaultRow
-                key={book.id}
-                book={book}
-                isLast={index === visibleBooks.length - 1}
-                isOpen={openVaultRowId === book.id}
-                onOpen={setOpenVaultRowId}
-                onDelete={handleDeleteBook}
-              />
-            ))}
+
+                  </View>
+                ) : null}
+
+                {isVaultModalEditing ? (
+                  <>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Title</Text>
+                      <TextInput
+                        value={vaultModalDraft.title}
+                        onChangeText={(value) =>
+                          setVaultModalDraft((current) => ({ ...current, title: value }))
+                        }
+                        style={styles.vaultModalInput}
+                        placeholder="Title"
+                        placeholderTextColor="#8E7C66"
+                      />
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Author</Text>
+                      <TextInput
+                        value={vaultModalDraft.author}
+                        onChangeText={(value) =>
+                          setVaultModalDraft((current) => ({ ...current, author: value }))
+                        }
+                        style={styles.vaultModalInput}
+                        placeholder="Author"
+                        placeholderTextColor="#8E7C66"
+                      />
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Status</Text>
+                      <View style={styles.statusSelector}>
+                        {bookStatusOptions.map((statusOption) => (
+                          <Pressable
+                            key={statusOption}
+                            onPress={() =>
+                              setVaultModalDraft((current) => ({
+                                ...current,
+                                status: statusOption,
+                                bookmark: statusOption === "In progress" ? current.bookmark : "",
+                              }))
+                            }
+                            style={[
+                              styles.statusOptionButton,
+                              vaultModalDraft.status === statusOption &&
+                                styles.statusOptionButtonActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.statusOptionLabel,
+                                vaultModalDraft.status === statusOption &&
+                                  styles.statusOptionLabelActive,
+                              ]}
+                            >
+                              {statusOption}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                    {vaultModalDraft.status === "In progress" ? (
+                      <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                        <Text style={styles.vaultModalLabel}>Bookmark</Text>
+                        <TextInput
+                          value={vaultModalDraft.bookmark}
+                          onChangeText={(value) =>
+                            setVaultModalDraft((current) => ({
+                              ...current,
+                              bookmark: value.replace(/[^0-9]/g, ""),
+                            }))
+                          }
+                          style={styles.vaultModalInput}
+                          placeholder="Bookmark page"
+                          placeholderTextColor="#8E7C66"
+                          keyboardType="number-pad"
+                        />
+                      </View>
+                    ) : null}
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Notes</Text>
+                      <TextInput
+                        value={vaultModalDraft.notes}
+                        onChangeText={(value) =>
+                          setVaultModalDraft((current) => ({ ...current, notes: value }))
+                        }
+                        style={[styles.vaultModalInput, styles.vaultModalMultilineInput]}
+                        placeholder="Notes"
+                        placeholderTextColor="#8E7C66"
+                        multiline
+                      />
+                    </View>
+                  </>
+                ) : selectedVaultBook ? (
+                  <>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Title</Text>
+                      <Text style={styles.vaultModalValue}>{selectedVaultBook.title}</Text>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Author</Text>
+                      <Text style={styles.vaultModalValue}>{selectedVaultBook.author}</Text>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Status</Text>
+                      <View
+                        style={[
+                          styles.vaultStatusBadge,
+                          getVaultStatusBadgeStyle(selectedVaultBook.status),
+                        ]}
+                      >
+                        <Text style={styles.vaultStatusBadgeLabel}>{selectedVaultBook.status}</Text>
+                      </View>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Bookmark</Text>
+                      <Text style={styles.vaultModalValue}>{getBookmarkLabel(selectedVaultBook)}</Text>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Notes</Text>
+                      <Text style={styles.vaultModalValue}>
+                        {selectedVaultBook.notes || "No notes yet."}
+                      </Text>
+                    </View>
+                  </>
+                ) : null}
+              </ScrollView>
+            </View>
           </View>
-        ) : null}
-      </SecondaryScreen>
+        </Modal>
+      </>
     );
   }
 
@@ -772,6 +1111,48 @@ export default function App() {
             style={[styles.input, styles.multilineInput]}
             multiline
           />
+          <View style={styles.statusSelector}>
+            {bookStatusOptions.map((statusOption) => (
+              <Pressable
+                key={statusOption}
+                onPress={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    status: statusOption,
+                    bookmark: statusOption === "In progress" ? current.bookmark : "",
+                  }))
+                }
+                style={[
+                  styles.statusOptionButton,
+                  draft.status === statusOption && styles.statusOptionButtonActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusOptionLabel,
+                    draft.status === statusOption && styles.statusOptionLabelActive,
+                  ]}
+                >
+                  {statusOption}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          {draft.status === "In progress" ? (
+            <TextInput
+              placeholder="Bookmark page"
+              placeholderTextColor="#9AA7B8"
+              value={draft.bookmark}
+              onChangeText={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  bookmark: value.replace(/[^0-9]/g, ""),
+                }))
+              }
+              keyboardType="number-pad"
+              style={styles.input}
+            />
+          ) : null}
           <Pressable onPress={handleAddBook} style={styles.primaryButton} disabled={saving}>
             <Text style={styles.primaryButtonLabel}>{saving ? "Saving..." : "Save to The Vault"}</Text>
           </Pressable>
@@ -912,8 +1293,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   screenTitle: {
-    marginTop: 18,
-    marginBottom: 20,
+    marginTop: 38,
+    marginBottom: 10,
     color: "#F6E7C9",
     fontSize: 32,
     fontWeight: "800",
@@ -952,6 +1333,30 @@ const styles = StyleSheet.create({
     borderColor: "rgba(246, 231, 201, 0.08)",
     backgroundColor: "#1A140E",
     gap: 14,
+  },
+  statusSelector: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  statusOptionButton: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    backgroundColor: "#261C13",
+  },
+  statusOptionButtonActive: {
+    borderColor: "#D1A157",
+    backgroundColor: "rgba(209, 161, 87, 0.18)",
+  },
+  statusOptionLabel: {
+    color: "#D8C8AE",
+    fontWeight: "600",
+  },
+  statusOptionLabelActive: {
+    color: "#FFF7EA",
   },
   input: {
     backgroundColor: "#261C13",
@@ -1022,12 +1427,24 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: appChromeColor,
   },
+  vaultToolbarHeader: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    marginTop: -2,
+  },
   vaultToolbarWrap: {
     backgroundColor: appChromeColor,
     paddingBottom: 12,
   },
   vaultDismissSurface: {
     alignSelf: "stretch",
+  },
+  vaultSubtitle: {
+    color: "#D8C8AE",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: -4,
   },
   vaultResultCount: {
     color: "#A9987E",
@@ -1111,11 +1528,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#471515",
   },
   vaultTableRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 12,
     backgroundColor: "#1A140E",
     borderBottomWidth: 1,
     borderBottomColor: "rgba(246, 231, 201, 0.06)",
@@ -1123,11 +1535,24 @@ const styles = StyleSheet.create({
   vaultTableRowLast: {
     borderBottomWidth: 0,
   },
+  vaultRowPressable: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+  },
   vaultTitleColumn: {
-    flex: 1.55,
+    flex: 1.4,
   },
   vaultAuthorColumn: {
     flex: 1,
+  },
+  vaultStatusColumn: {
+    flex: 1,
+  },
+  vaultBookmarkColumn: {
+    flex: 0.65,
   },
   vaultCellPrimary: {
     color: "#FFF7EA",
@@ -1145,6 +1570,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  vaultStatusBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+  },
+  vaultStatusBadgeLabel: {
+    color: "#FFF7EA",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  vaultStatusInProgress: {
+    backgroundColor: "rgba(217, 119, 6, 0.18)",
+    borderColor: "rgba(245, 158, 11, 0.35)",
+  },
+  vaultStatusRead: {
+    backgroundColor: "rgba(22, 101, 52, 0.2)",
+    borderColor: "rgba(74, 222, 128, 0.28)",
+  },
+  vaultStatusNotRead: {
+    backgroundColor: "rgba(71, 85, 105, 0.22)",
+    borderColor: "rgba(148, 163, 184, 0.26)",
+  },
   vaultDeleteButton: {
     borderRadius: 999,
     minWidth: 76,
@@ -1157,4 +1606,133 @@ const styles = StyleSheet.create({
     color: "#FEE2E2",
     fontWeight: "700",
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 5, 3, 0.8)",
+    paddingHorizontal: 20,
+    justifyContent: "center",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  vaultModalCard: {
+    maxHeight: "76%",
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.14)",
+    backgroundColor: "#140F0A",
+    shadowColor: "#000000",
+    shadowOpacity: 0.32,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 14,
+    overflow: "hidden",
+  },
+  vaultModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
+  vaultModalIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(246, 231, 201, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.14)",
+  },
+  vaultModalActionButton: {
+    width: "auto",
+    minWidth: 64,
+    paddingHorizontal: 14,
+  },
+  vaultModalIconLabel: {
+    color: "#F6E7C9",
+    fontSize: 26,
+    lineHeight: 28,
+    fontWeight: "600",
+  },
+  vaultModalHammerLabel: {
+    color: "#F6E7C9",
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  vaultModalBody: {
+    flexShrink: 1,
+  },
+  vaultModalBodyContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    gap: 10,
+  },
+  vaultModalHero: {
+    padding: 16,
+    borderRadius: 20,
+    backgroundColor: "#1D160F",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    gap: 4,
+  },
+  vaultModalEyebrow: {
+    color: "#C9A66B",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  vaultModalTitle: {
+    color: "#FFF7EA",
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: "800",
+  },
+  vaultModalAuthor: {
+    color: "#DCC8A7",
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  vaultModalField: {
+    gap: 6,
+  },
+  vaultModalFieldCard: {
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: "#1A140E",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+  },
+  vaultModalLabel: {
+    color: "#A9987E",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  vaultModalValue: {
+    color: "#FFF7EA",
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  vaultModalInput: {
+    backgroundColor: "#261C13",
+    color: "#FFF7EA",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    fontSize: 15,
+  },
+  vaultModalMultilineInput: {
+    minHeight: 96,
+    textAlignVertical: "top",
+  },
 });
+

@@ -9,6 +9,7 @@ import {
   GestureResponderEvent,
   Image,
   ImageBackground,
+  PanResponder,
   Platform,
   Pressable,
   SafeAreaView,
@@ -20,12 +21,13 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { BookCard } from "./src/components/BookCard";
 import { createBook, fetchBooks, removeBook } from "./src/services/books";
 import type { Book } from "./src/types/book";
 
 type Screen = "home" | "vault" | "manual" | "ocr";
 type HomeBackgroundMode = "image" | "frames" | "video";
+type VaultSortKey = "title" | "author";
+type VaultSortDirection = "asc" | "desc";
 
 const emptyDraft = {
   title: "",
@@ -144,6 +146,8 @@ type SecondaryScreenProps = {
   title: string;
   onBack: () => void;
   backPosition?: "top" | "bottom";
+  stickyHeaderIndices?: number[];
+  onScrollBeginDrag?: () => void;
   children: React.ReactNode;
 };
 
@@ -151,6 +155,8 @@ function SecondaryScreen({
   title,
   onBack,
   backPosition = "bottom",
+  stickyHeaderIndices,
+  onScrollBeginDrag,
   children,
 }: SecondaryScreenProps) {
   const isBottomBackButton = backPosition === "bottom";
@@ -165,7 +171,14 @@ function SecondaryScreen({
           </Pressable>
         ) : null}
         <Text style={styles.screenTitle}>{title}</Text>
-        <ScrollView contentContainerStyle={styles.screenContent}>{children}</ScrollView>
+        <ScrollView
+          contentContainerStyle={styles.screenContent}
+          stickyHeaderIndices={stickyHeaderIndices}
+          onScrollBeginDrag={onScrollBeginDrag}
+          keyboardShouldPersistTaps="handled"
+        >
+          {children}
+        </ScrollView>
         {isBottomBackButton ? (
           <Pressable onPress={onBack} style={[styles.backButton, styles.bottomBackButton]}>
             <Text style={styles.backButtonLabel}>{"<"}</Text>
@@ -173,6 +186,99 @@ function SecondaryScreen({
         ) : null}
       </View>
     </SafeAreaView>
+  );
+}
+
+type SwipeableVaultRowProps = {
+  book: Book;
+  isLast: boolean;
+  isOpen: boolean;
+  onOpen: (id: string | null) => void;
+  onDelete: (id: string) => void;
+};
+
+const vaultDeleteRevealWidth = 104;
+const vaultSwipeOpenThreshold = 56;
+const vaultSwipeCloseThreshold = 36;
+const vaultSwipeVelocityThreshold = 0.35;
+
+function SwipeableVaultRow({
+  book,
+  isLast,
+  isOpen,
+  onOpen,
+  onDelete,
+}: SwipeableVaultRowProps) {
+  const translateX = useRef(new Animated.Value(isOpen ? -vaultDeleteRevealWidth : 0)).current;
+
+  useEffect(() => {
+    Animated.spring(translateX, {
+      toValue: isOpen ? -vaultDeleteRevealWidth : 0,
+      damping: 20,
+      mass: 0.9,
+      stiffness: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [isOpen, translateX]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) =>
+        Math.abs(gestureState.dx) > Math.abs(gestureState.dy) && Math.abs(gestureState.dx) > 6,
+      onPanResponderGrant: () => {
+        translateX.stopAnimation();
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const nextValue = isOpen
+          ? Math.min(0, Math.max(-vaultDeleteRevealWidth, -vaultDeleteRevealWidth + gestureState.dx))
+          : Math.min(0, Math.max(-vaultDeleteRevealWidth, gestureState.dx));
+
+        translateX.setValue(nextValue);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const shouldOpen = isOpen
+          ? !(
+              gestureState.dx > vaultSwipeCloseThreshold ||
+              gestureState.vx > vaultSwipeVelocityThreshold
+            )
+          : gestureState.dx < -vaultSwipeOpenThreshold ||
+            gestureState.vx < -vaultSwipeVelocityThreshold;
+        onOpen(shouldOpen ? book.id : null);
+      },
+      onPanResponderTerminate: () => {
+        onOpen(isOpen ? book.id : null);
+      },
+    })
+  ).current;
+
+  return (
+    <View style={[styles.vaultSwipeRow, isLast && styles.vaultSwipeRowLast]}>
+      <View style={styles.vaultSwipeActionLayer}>
+        <Pressable onPress={() => onDelete(book.id)} style={styles.vaultDeleteButton}>
+          <Text style={styles.vaultDeleteButtonLabel}>Delete</Text>
+        </Pressable>
+      </View>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={[
+          styles.vaultTableRow,
+          isLast && styles.vaultTableRowLast,
+          { transform: [{ translateX }] },
+        ]}
+      >
+        <View style={styles.vaultTitleColumn}>
+          <Text style={styles.vaultCellPrimary}>{book.title}</Text>
+          {book.notes ? (
+            <Text numberOfLines={2} style={styles.vaultCellSecondary}>
+              {book.notes}
+            </Text>
+          ) : null}
+        </View>
+        <View style={styles.vaultAuthorColumn}>
+          <Text style={styles.vaultCellValue}>{book.author}</Text>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -195,6 +301,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
+  const [vaultSearch, setVaultSearch] = useState("");
+  const [vaultSortKey, setVaultSortKey] = useState<VaultSortKey>("title");
+  const [vaultSortDirection, setVaultSortDirection] = useState<VaultSortDirection>("asc");
+  const [openVaultRowId, setOpenVaultRowId] = useState<string | null>(null);
   const homeButtonsAnimation = useRef(
     new Animated.Value(areHomeButtonsInitiallyVisible ? 1 : 0)
   ).current;
@@ -270,6 +380,9 @@ export default function App() {
       setLoading(true);
       const nextBooks = await fetchBooks();
       setBooks(nextBooks);
+      setOpenVaultRowId((current) =>
+        nextBooks.some((book) => book.id === current) ? current : null
+      );
     } catch (error) {
       Alert.alert("Database error", error instanceof Error ? error.message : "Unknown error");
     } finally {
@@ -355,11 +468,57 @@ export default function App() {
   async function handleDeleteBook(id: string) {
     try {
       await removeBook(id);
+      setOpenVaultRowId(null);
       await refreshBooks();
     } catch (error) {
       Alert.alert("Delete failed", error instanceof Error ? error.message : "Unknown error");
     }
   }
+
+  function handleVaultSortChange(nextKey: VaultSortKey) {
+    if (vaultSortKey === nextKey) {
+      setVaultSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setVaultSortKey(nextKey);
+    setVaultSortDirection("asc");
+  }
+
+  function getVaultSortLabel(sortKey: VaultSortKey, label: string) {
+    return label;
+  }
+
+  function getVaultSortArrow(sortKey: VaultSortKey) {
+    if (vaultSortKey !== sortKey) {
+      return "";
+    }
+
+    return vaultSortDirection === "asc" ? "↑" : "↓";
+  }
+
+  const normalizedSearch = vaultSearch.trim().toLowerCase();
+  const visibleBooks = [...books]
+    .filter((book) => {
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const haystack = `${book.title} ${book.author}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    })
+    .sort((left, right) => {
+      const comparison = left[vaultSortKey].localeCompare(right[vaultSortKey], undefined, {
+        sensitivity: "base",
+      });
+
+      if (comparison === 0) {
+        return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+      }
+
+      return vaultSortDirection === "asc" ? comparison : -comparison;
+    });
+  const hasVisibleBooks = !loading && books.length > 0 && visibleBooks.length > 0;
 
   if (screen === "home") {
     const menuStackAnimatedStyle = {
@@ -435,40 +594,147 @@ export default function App() {
   }
 
   if (screen === "vault") {
+    const dismissOpenVaultRow = () => {
+      setOpenVaultRowId(null);
+    };
+
     return (
       <SecondaryScreen
         title="The Vault"
         onBack={() => setScreen("home")}
         backPosition="bottom"
+        stickyHeaderIndices={hasVisibleBooks ? [1, 2] : undefined}
+        onScrollBeginDrag={dismissOpenVaultRow}
       >
-        <View style={styles.infoPanel}>
-          <Text style={styles.panelHeading}>Saved books</Text>
-          <Text style={styles.panelCopy}>
-            All your saved books live here. Pull the refresh button whenever you want to sync the
-            view with local SQLite.
-          </Text>
-          <Pressable onPress={refreshBooks} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonLabel}>Refresh</Text>
+        <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+          <View style={styles.infoPanel}>
+            <Text style={styles.panelHeading}>Saved books</Text>
+            <Text style={styles.panelCopy}>
+              All your saved books live here. Pull the refresh button whenever you want to sync the
+              view with local SQLite.
+            </Text>
+            <Pressable onPress={refreshBooks} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonLabel}>Refresh</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+
+        {hasVisibleBooks ? (
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.vaultToolbarWrap}>
+              <View style={styles.vaultToolbar}>
+                <TextInput
+                  value={vaultSearch}
+                  onChangeText={setVaultSearch}
+                  placeholder="Search by title or author"
+                  placeholderTextColor="#8E7C66"
+                  style={styles.vaultSearchInput}
+                />
+                <Text style={styles.vaultResultCount}>
+                  {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
+                </Text>
+              </View>
+            </View>
           </Pressable>
-        </View>
+        ) : (
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.vaultToolbar}>
+              <TextInput
+                value={vaultSearch}
+                onChangeText={setVaultSearch}
+                placeholder="Search by title or author"
+                placeholderTextColor="#8E7C66"
+                style={styles.vaultSearchInput}
+              />
+              <Text style={styles.vaultResultCount}>
+                {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
+              </Text>
+            </View>
+          </Pressable>
+        )}
+
+        {hasVisibleBooks ? (
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.vaultTableHeaderWrap}>
+              <View style={styles.vaultTableHeader}>
+                <Pressable
+                  onPress={() => handleVaultSortChange("title")}
+                  style={[styles.vaultHeaderButton, styles.vaultTitleColumn]}
+                >
+                  <View style={styles.vaultHeaderInner}>
+                    <Text
+                      style={[
+                        styles.vaultHeaderCell,
+                        vaultSortKey === "title" && styles.vaultHeaderCellActive,
+                      ]}
+                    >
+                      {getVaultSortLabel("title", "Title")}
+                    </Text>
+                    {getVaultSortArrow("title") ? (
+                      <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("title")}</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleVaultSortChange("author")}
+                  style={[styles.vaultHeaderButton, styles.vaultAuthorColumn]}
+                >
+                  <View style={styles.vaultHeaderInner}>
+                    <Text
+                      style={[
+                        styles.vaultHeaderCell,
+                        vaultSortKey === "author" && styles.vaultHeaderCellActive,
+                      ]}
+                    >
+                      {getVaultSortLabel("author", "Author")}
+                    </Text>
+                    {getVaultSortArrow("author") ? (
+                      <Text style={styles.vaultHeaderArrow}>{getVaultSortArrow("author")}</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              </View>
+            </View>
+          </Pressable>
+        ) : null}
 
         {loading ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator color="#E2C38B" />
-            <Text style={styles.loadingText}>Loading from SQLite...</Text>
-          </View>
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.loadingBox}>
+              <ActivityIndicator color="#E2C38B" />
+              <Text style={styles.loadingText}>Loading from SQLite...</Text>
+            </View>
+          </Pressable>
         ) : books.length === 0 ? (
-          <View style={styles.emptyPanel}>
-            <Text style={styles.emptyTitle}>The vault is empty.</Text>
-            <Text style={styles.emptyText}>Use Manual from the home screen to add your first book.</Text>
-          </View>
-        ) : (
-          <View style={styles.bookList}>
-            {books.map((book) => (
-              <BookCard key={book.id} book={book} onDelete={handleDeleteBook} />
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>The vault is empty.</Text>
+              <Text style={styles.emptyText}>Use Manual from the home screen to add your first book.</Text>
+            </View>
+          </Pressable>
+        ) : visibleBooks.length === 0 ? (
+          <Pressable onPress={dismissOpenVaultRow} style={styles.vaultDismissSurface}>
+            <View style={styles.emptyPanel}>
+              <Text style={styles.emptyTitle}>No matches found.</Text>
+              <Text style={styles.emptyText}>Try a different title or author in the search bar.</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {hasVisibleBooks ? (
+          <View style={styles.vaultTableBody}>
+            {visibleBooks.map((book, index) => (
+              <SwipeableVaultRow
+                key={book.id}
+                book={book}
+                isLast={index === visibleBooks.length - 1}
+                isOpen={openVaultRowId === book.id}
+                onOpen={setOpenVaultRowId}
+                onDelete={handleDeleteBook}
+              />
             ))}
           </View>
-        )}
+        ) : null}
       </SecondaryScreen>
     );
   }
@@ -752,7 +1018,143 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
   },
-  bookList: {
+  vaultToolbar: {
     gap: 12,
+    backgroundColor: appChromeColor,
+  },
+  vaultToolbarWrap: {
+    backgroundColor: appChromeColor,
+    paddingBottom: 12,
+  },
+  vaultDismissSurface: {
+    alignSelf: "stretch",
+  },
+  vaultResultCount: {
+    color: "#A9987E",
+    fontSize: 13,
+    fontWeight: "600",
+    paddingHorizontal: 4,
+  },
+  vaultSearchInput: {
+    backgroundColor: "#261C13",
+    color: "#FFF7EA",
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+  },
+  vaultTableHeaderWrap: {
+    backgroundColor: appChromeColor,
+  },
+  vaultTableBody: {
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    backgroundColor: "#1A140E",
+    overflow: "hidden",
+  },
+  vaultTableHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: "#241A11",
+    borderWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  vaultHeaderCell: {
+    color: "#E4D2B3",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  vaultHeaderCellActive: {
+    color: "#FFF7EA",
+  },
+  vaultHeaderButton: {
+    justifyContent: "center",
+  },
+  vaultHeaderInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  vaultHeaderArrow: {
+    color: "#FFF7EA",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  vaultSwipeRow: {
+    position: "relative",
+    overflow: "hidden",
+    backgroundColor: "#1A140E",
+  },
+  vaultSwipeRowLast: {
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  vaultSwipeActionLayer: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: vaultDeleteRevealWidth,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#471515",
+  },
+  vaultTableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    gap: 12,
+    backgroundColor: "#1A140E",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(246, 231, 201, 0.06)",
+  },
+  vaultTableRowLast: {
+    borderBottomWidth: 0,
+  },
+  vaultTitleColumn: {
+    flex: 1.55,
+  },
+  vaultAuthorColumn: {
+    flex: 1,
+  },
+  vaultCellPrimary: {
+    color: "#FFF7EA",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  vaultCellSecondary: {
+    marginTop: 5,
+    color: "#A9987E",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  vaultCellValue: {
+    color: "#D8C8AE",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  vaultDeleteButton: {
+    borderRadius: 999,
+    minWidth: 76,
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#6F1D1B",
+  },
+  vaultDeleteButtonLabel: {
+    color: "#FEE2E2",
+    fontWeight: "700",
   },
 });

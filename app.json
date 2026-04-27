@@ -22,6 +22,12 @@
           "visibility": "visible"
         }
       ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow MyLibrary to access your camera for OCR scanning."
+        }
+      ],
       "expo-video",
       "expo-sqlite"
     ],

@@ -5,6 +5,8 @@ type BookRow = {
   id: number;
   title: string;
   author: string;
+  edition: string;
+  genre: string;
   notes: string;
   status: string;
   bookmark: number | null;
@@ -23,6 +25,8 @@ function mapBookRow(row: BookRow): Book {
     id: String(row.id),
     title: row.title,
     author: row.author,
+    edition: row.edition,
+    genre: row.genre,
     notes: row.notes,
     status: normalizeBookStatus(row.status),
     bookmark: row.bookmark ?? undefined,
@@ -38,6 +42,8 @@ export async function fetchBooks(): Promise<Book[]> {
       id,
       title,
       author,
+      edition,
+      genre,
       notes,
       status,
       bookmark,
@@ -58,10 +64,12 @@ export async function createBook(book: BookDraft): Promise<void> {
     normalizedStatus === "In progress" && typeof book.bookmark === "number" ? book.bookmark : null;
 
   await db.runAsync(
-    `INSERT INTO books (title, author, notes, status, bookmark, ai_summary, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO books (title, author, edition, genre, notes, status, bookmark, ai_summary, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     book.title.trim(),
     book.author.trim(),
+    book.edition.trim(),
+    book.genre.trim(),
     book.notes.trim(),
     normalizedStatus,
     bookmark,
@@ -83,6 +91,16 @@ export async function updateBook(id: string, patch: Partial<BookDraft>): Promise
   if (patch.author !== undefined) {
     updates.push("author = ?");
     values.push(patch.author.trim());
+  }
+
+  if (patch.edition !== undefined) {
+    updates.push("edition = ?");
+    values.push(patch.edition.trim());
+  }
+
+  if (patch.genre !== undefined) {
+    updates.push("genre = ?");
+    values.push(patch.genre.trim());
   }
 
   if (patch.notes !== undefined) {

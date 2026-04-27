@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "expo": "~54.0.33",
+    "expo-camera": "^55.0.16",
     "expo-navigation-bar": "~5.0.10",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",

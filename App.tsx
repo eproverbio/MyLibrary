@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import * as NavigationBar from "expo-navigation-bar";
 import { useVideoPlayer, VideoView } from "expo-video";
 import {
@@ -31,12 +32,91 @@ type Screen = "home" | "vault" | "manual" | "ocr";
 type HomeBackgroundMode = "image" | "frames" | "video";
 type VaultSortKey = "title" | "author";
 type VaultSortDirection = "asc" | "desc";
+type VaultStatusFilter = "All" | BookStatus;
+type GenrePickerTarget = "manual" | "vault" | null;
 
 const bookStatusOptions: BookStatus[] = ["In progress", "Read", "Not Read"];
+const literaryGenreOptions = [
+  "",
+  "Action",
+  "Adventure",
+  "Allegory",
+  "Alternate history",
+  "Anthology",
+  "Apocalyptic",
+  "Art book",
+  "Autobiography",
+  "Bildungsroman",
+  "Biography",
+  "Campus novel",
+  "Children's",
+  "Classic",
+  "Coming-of-age",
+  "Comedy",
+  "Contemporary",
+  "Crime",
+  "Cyberpunk",
+  "Dark fantasy",
+  "Detective",
+  "Dystopian",
+  "Drama",
+  "Epic",
+  "Epistolary",
+  "Essay",
+  "Fairy tale",
+  "Family saga",
+  "Fantasy",
+  "Feminist fiction",
+  "Folklore",
+  "Gothic",
+  "Graphic novel",
+  "Hard science fiction",
+  "Historical fiction",
+  "Horror",
+  "Humor",
+  "Literary fiction",
+  "Magical realism",
+  "Memoir",
+  "Metafiction",
+  "Middle grade",
+  "Military fiction",
+  "Mystery",
+  "Mythology",
+  "Noir",
+  "Novella",
+  "Paranormal",
+  "Philosophical fiction",
+  "Poetry",
+  "Political fiction",
+  "Post-apocalyptic",
+  "Psychological thriller",
+  "Romance",
+  "Satire",
+  "Science fiction",
+  "Self-help",
+  "Short stories",
+  "Slice of life",
+  "Social commentary",
+  "Space opera",
+  "Speculative fiction",
+  "Steampunk",
+  "Suspense",
+  "Thriller",
+  "Travel writing",
+  "True crime",
+  "Urban fantasy",
+  "Utopian",
+  "War",
+  "Western",
+  "Women's fiction",
+  "Young adult",
+] as const;
 
 const emptyDraft = {
   title: "",
   author: "",
+  edition: "",
+  genre: "",
   notes: "",
   status: "Not Read" as BookStatus,
   bookmark: "",
@@ -71,6 +151,17 @@ const futureAssets = {
   manualButton: "assets/ui/button-manual.png",
   ocrButton: "assets/ui/button-look.png",
 };
+
+function parseGenreValue(value: string) {
+  return value
+    .split(",")
+    .map((genre) => genre.trim())
+    .filter(Boolean);
+}
+
+function formatGenreValue(genres: string[]) {
+  return genres.join(", ");
+}
 
 type HomeVideoBackgroundProps = {
   source: number | null;
@@ -302,6 +393,9 @@ function SwipeableVaultRow({
             <Text numberOfLines={2} style={styles.vaultCellPrimary}>
               {book.title}
             </Text>
+            <Text numberOfLines={1} style={styles.vaultCellSecondary}>
+              {book.genre || ""}
+            </Text>
           </View>
           <View style={styles.vaultAuthorColumn}>
             <Text numberOfLines={2} style={styles.vaultCellValue}>
@@ -335,6 +429,8 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
   const [vaultSearch, setVaultSearch] = useState("");
+  const [vaultStatusFilter, setVaultStatusFilter] = useState<VaultStatusFilter>("All");
+  const [isVaultStatusMenuOpen, setIsVaultStatusMenuOpen] = useState(false);
   const [vaultSortKey, setVaultSortKey] = useState<VaultSortKey>("title");
   const [vaultSortDirection, setVaultSortDirection] = useState<VaultSortDirection>("asc");
   const [openVaultRowId, setOpenVaultRowId] = useState<string | null>(null);
@@ -342,6 +438,10 @@ export default function App() {
   const [isVaultModalEditing, setIsVaultModalEditing] = useState(false);
   const [isVaultModalSaving, setIsVaultModalSaving] = useState(false);
   const [vaultModalDraft, setVaultModalDraft] = useState(emptyDraft);
+  const [genrePickerTarget, setGenrePickerTarget] = useState<GenrePickerTarget>(null);
+  const [genrePickerSelection, setGenrePickerSelection] = useState<string[]>([]);
+  const [duplicateBookWarningTarget, setDuplicateBookWarningTarget] = useState<Book | null>(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const homeButtonsAnimation = useRef(
     new Animated.Value(areHomeButtonsInitiallyVisible ? 1 : 0)
   ).current;
@@ -478,6 +578,22 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    if (screen !== "ocr") {
+      return;
+    }
+
+    if (cameraPermission?.granted) {
+      return;
+    }
+
+    if (cameraPermission && cameraPermission.canAskAgain === false) {
+      return;
+    }
+
+    void requestCameraPermission();
+  }, [screen, cameraPermission, requestCameraPermission]);
+
+  useEffect(() => {
     if (
       screen !== "home" ||
       homeBackgroundMode !== "frames" ||
@@ -496,6 +612,12 @@ export default function App() {
   async function handleAddBook() {
     if (!draft.title.trim() || !draft.author.trim()) {
       Alert.alert("Missing data", "Please add at least a title and an author.");
+      return;
+    }
+
+    const duplicateBook = findDuplicateBook(draft.title, draft.author);
+    if (duplicateBook) {
+      showDuplicateBookWarning(duplicateBook);
       return;
     }
 
@@ -522,6 +644,8 @@ export default function App() {
       await createBook({
         title: draft.title.trim(),
         author: draft.author.trim(),
+        edition: draft.edition.trim(),
+        genre: draft.genre.trim(),
         notes: draft.notes.trim(),
         status: draft.status,
         bookmark: parsedBookmark,
@@ -570,15 +694,141 @@ export default function App() {
     return vaultSortDirection === "asc" ? "↑" : "↓";
   }
 
+  function handleVaultStatusFilterChange(nextFilter: VaultStatusFilter) {
+    setVaultStatusFilter(nextFilter);
+    setIsVaultStatusMenuOpen(false);
+  }
+
+  function openGenrePicker(target: Exclude<GenrePickerTarget, null>) {
+    const currentGenre = target === "manual" ? draft.genre : vaultModalDraft.genre;
+    setGenrePickerSelection(parseGenreValue(currentGenre));
+    setGenrePickerTarget(target);
+  }
+
+  function closeGenrePicker() {
+    setGenrePickerTarget(null);
+    setGenrePickerSelection([]);
+  }
+
+  function handleGenreToggle(genre: string) {
+    if (!genre) {
+      setGenrePickerSelection([]);
+      return;
+    }
+
+    setGenrePickerSelection((current) =>
+      current.includes(genre) ? current.filter((item) => item !== genre) : [...current, genre]
+    );
+  }
+
+  function applyGenrePickerSelection() {
+    const genre = formatGenreValue(genrePickerSelection);
+
+    if (genrePickerTarget === "manual") {
+      setDraft((current) => ({ ...current, genre }));
+    }
+
+    if (genrePickerTarget === "vault") {
+      setVaultModalDraft((current) => ({ ...current, genre }));
+    }
+
+    closeGenrePicker();
+  }
+
+  function getGenrePickerLabel(value: string) {
+    return value || "Select genre";
+  }
+
+  function findDuplicateBook(title: string, author: string, excludeId?: string) {
+    const normalizedTitle = title.trim().toLowerCase();
+    const normalizedAuthor = author.trim().toLowerCase();
+
+    return books.find((book) => {
+      if (excludeId && book.id === excludeId) {
+        return false;
+      }
+
+      return (
+        book.title.trim().toLowerCase() === normalizedTitle &&
+        book.author.trim().toLowerCase() === normalizedAuthor
+      );
+    });
+  }
+
+  function openExistingBookCard(book: Book) {
+    setDuplicateBookWarningTarget(null);
+    setIsVaultModalEditing(false);
+    setOpenVaultRowId(null);
+    setSelectedVaultBookId(book.id);
+    setScreen("vault");
+  }
+
+  function showDuplicateBookWarning(book: Book) {
+    setDuplicateBookWarningTarget(book);
+  }
+
+  function renderDuplicateWarningModal() {
+    return (
+      <Modal
+        animationType="fade"
+        transparent
+        visible={duplicateBookWarningTarget !== null}
+        onRequestClose={() => setDuplicateBookWarningTarget(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => setDuplicateBookWarningTarget(null)}
+          />
+          <View style={styles.duplicateWarningCard}>
+            <Text style={styles.duplicateWarningEyebrow}>Warning</Text>
+            <Text style={styles.duplicateWarningTitle}>Duplicate book</Text>
+            <Text style={styles.duplicateWarningText}>
+              A book with the same title and author is already in your Vault.
+            </Text>
+            <View style={styles.duplicateWarningMeta}>
+              <Text style={styles.duplicateWarningMetaLabel}>
+                {duplicateBookWarningTarget?.title || ""}
+              </Text>
+              <Text style={styles.duplicateWarningMetaValue}>
+                {duplicateBookWarningTarget?.author || ""}
+              </Text>
+            </View>
+            <View style={styles.duplicateWarningActions}>
+              <Pressable
+                onPress={() => setDuplicateBookWarningTarget(null)}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonLabel}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() =>
+                  duplicateBookWarningTarget
+                    ? openExistingBookCard(duplicateBookWarningTarget)
+                    : null
+                }
+                style={styles.primaryButton}
+              >
+                <Text style={styles.primaryButtonLabel}>Open card</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   const normalizedSearch = vaultSearch.trim().toLowerCase();
   const visibleBooks = [...books]
     .filter((book) => {
       if (!normalizedSearch) {
-        return true;
+        return vaultStatusFilter === "All" ? true : book.status === vaultStatusFilter;
       }
 
-      const haystack = `${book.title} ${book.author}`.toLowerCase();
-      return haystack.includes(normalizedSearch);
+      const haystack = `${book.title} ${book.author} ${book.edition} ${book.genre}`.toLowerCase();
+      const matchesSearch = haystack.includes(normalizedSearch);
+      const matchesStatus = vaultStatusFilter === "All" ? true : book.status === vaultStatusFilter;
+      return matchesSearch && matchesStatus;
     })
     .sort((left, right) => {
       const comparison = left[vaultSortKey].localeCompare(right[vaultSortKey], undefined, {
@@ -605,6 +855,8 @@ export default function App() {
     setVaultModalDraft({
       title: selectedVaultBook.title,
       author: selectedVaultBook.author,
+      edition: selectedVaultBook.edition,
+      genre: selectedVaultBook.genre,
       notes: selectedVaultBook.notes,
       status: selectedVaultBook.status,
       bookmark:
@@ -641,6 +893,16 @@ export default function App() {
       return;
     }
 
+    const duplicateBook = findDuplicateBook(
+      vaultModalDraft.title,
+      vaultModalDraft.author,
+      selectedVaultBook.id
+    );
+    if (duplicateBook) {
+      showDuplicateBookWarning(duplicateBook);
+      return;
+    }
+
     if (vaultModalDraft.status === "In progress" && !vaultModalDraft.bookmark.trim()) {
       Alert.alert("Missing bookmark", "Add the last page reached for books in progress.");
       return;
@@ -664,6 +926,8 @@ export default function App() {
       await updateBook(selectedVaultBook.id, {
         title: vaultModalDraft.title.trim(),
         author: vaultModalDraft.author.trim(),
+        edition: vaultModalDraft.edition.trim(),
+        genre: vaultModalDraft.genre.trim(),
         notes: vaultModalDraft.notes.trim(),
         status: vaultModalDraft.status,
         bookmark: parsedBookmark,
@@ -731,7 +995,7 @@ export default function App() {
                   />
                   <MenuButton
                     isExpanded={expandedButtons.manual}
-                    label="Write"
+                    label="Add Book"
                     tint="rgba(196, 181, 253, 0.45)"
                     onPress={(event) => handleHomeButtonPress("manual", event)}
                   />
@@ -753,6 +1017,7 @@ export default function App() {
   if (screen === "vault") {
     const dismissOpenVaultRow = () => {
       setOpenVaultRowId(null);
+      setIsVaultStatusMenuOpen(false);
     };
 
     return (
@@ -784,13 +1049,52 @@ export default function App() {
                       {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
                     </Text>
                   </View>
-                  <TextInput
-                    value={vaultSearch}
-                    onChangeText={setVaultSearch}
-                    placeholder="Search by title or author"
-                    placeholderTextColor="#8E7C66"
-                    style={styles.vaultSearchInput}
-                  />
+                  <View style={styles.vaultSearchRow}>
+                    <TextInput
+                      value={vaultSearch}
+                      onChangeText={setVaultSearch}
+                      placeholder="Search by title, author or genre"
+                      placeholderTextColor="#8E7C66"
+                      style={styles.vaultSearchInput}
+                    />
+                    <View style={styles.vaultFilterWrap}>
+                      <Pressable
+                        onPress={() => setIsVaultStatusMenuOpen((current) => !current)}
+                        style={styles.vaultFilterButton}
+                      >
+                        <Text style={styles.vaultFilterLabel} numberOfLines={1}>
+                          {vaultStatusFilter}
+                        </Text>
+                        <Text style={styles.vaultFilterCaret}>
+                          {isVaultStatusMenuOpen ? "↑" : "↓"}
+                        </Text>
+                      </Pressable>
+                      {isVaultStatusMenuOpen ? (
+                        <View style={styles.vaultFilterMenu}>
+                          {(["All", ...bookStatusOptions] as VaultStatusFilter[]).map((option) => (
+                            <Pressable
+                              key={option}
+                              onPress={() => handleVaultStatusFilterChange(option)}
+                              style={[
+                                styles.vaultFilterOption,
+                                vaultStatusFilter === option && styles.vaultFilterOptionActive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.vaultFilterOptionLabel,
+                                  vaultStatusFilter === option &&
+                                    styles.vaultFilterOptionLabelActive,
+                                ]}
+                              >
+                                {option}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
                 </View>
               </View>
             </Pressable>
@@ -802,13 +1106,57 @@ export default function App() {
                     {visibleBooks.length} {visibleBooks.length === 1 ? "result" : "results"}
                   </Text>
                 </View>
-                <TextInput
-                  value={vaultSearch}
-                  onChangeText={setVaultSearch}
-                  placeholder="Search by title or author"
-                  placeholderTextColor="#8E7C66"
-                  style={styles.vaultSearchInput}
-                />
+                <View style={styles.vaultSearchRow}>
+                  <TextInput
+                    value={vaultSearch}
+                    onChangeText={setVaultSearch}
+                    placeholder="Search by title, author or genre"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultSearchInput}
+                  />
+                  <View
+                    style={[
+                      styles.vaultFilterWrap,
+                      isVaultStatusMenuOpen && styles.vaultFilterWrapRaised,
+                    ]}
+                  >
+                    <Pressable
+                      onPress={() => setIsVaultStatusMenuOpen((current) => !current)}
+                      style={styles.vaultFilterButton}
+                    >
+                      <Text style={styles.vaultFilterLabel} numberOfLines={1}>
+                        {vaultStatusFilter}
+                      </Text>
+                      <Text style={styles.vaultFilterCaret}>
+                        {isVaultStatusMenuOpen ? "↑" : "↓"}
+                      </Text>
+                    </Pressable>
+                    {isVaultStatusMenuOpen ? (
+                      <View style={styles.vaultFilterMenu}>
+                        {(["All", ...bookStatusOptions] as VaultStatusFilter[]).map((option) => (
+                          <Pressable
+                            key={option}
+                            onPress={() => handleVaultStatusFilterChange(option)}
+                            style={[
+                              styles.vaultFilterOption,
+                              vaultStatusFilter === option && styles.vaultFilterOptionActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.vaultFilterOptionLabel,
+                                vaultStatusFilter === option &&
+                                  styles.vaultFilterOptionLabelActive,
+                              ]}
+                            >
+                              {option}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
               </View>
             </Pressable>
           )}
@@ -905,6 +1253,110 @@ export default function App() {
         <Modal
           animationType="fade"
           transparent
+          visible={genrePickerTarget !== null}
+          onRequestClose={closeGenrePicker}
+        >
+          <View style={styles.genrePickerModalOverlay}>
+            <Pressable style={styles.genrePickerModalBackdrop} onPress={closeGenrePicker} />
+            <View style={styles.genrePickerModalCard}>
+              <View style={styles.genrePickerModalHeader}>
+                <Text style={styles.genrePickerModalTitle}>Select Genre</Text>
+                <Text style={styles.genrePickerModalSubtitle}>
+                  {genrePickerSelection.length === 0
+                    ? "No genre selected"
+                    : `${genrePickerSelection.length} selected`}
+                </Text>
+              </View>
+              <ScrollView
+                style={styles.genrePickerModalList}
+                contentContainerStyle={styles.genrePickerModalListContent}
+                keyboardShouldPersistTaps="handled"
+              >
+                {literaryGenreOptions.map((option) => {
+                  const isActive = option === ""
+                    ? genrePickerSelection.length === 0
+                    : genrePickerSelection.includes(option);
+
+                  return (
+                    <Pressable
+                      key={option || "__empty_genre__"}
+                      onPress={() => handleGenreToggle(option)}
+                      style={[styles.genrePickerOption, isActive && styles.genrePickerOptionActive]}
+                    >
+                      <View style={styles.genrePickerOptionRow}>
+                        <Text
+                          style={[
+                            styles.genrePickerOptionLabel,
+                            isActive && styles.genrePickerOptionLabelActive,
+                          ]}
+                        >
+                          {option || "No genre"}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.genrePickerOptionCheck,
+                            isActive && styles.genrePickerOptionCheckActive,
+                          ]}
+                        >
+                          {isActive ? "Selected" : ""}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              <View style={styles.genrePickerActions}>
+                <Pressable onPress={() => setGenrePickerSelection([])} style={styles.secondaryButton}>
+                  <Text style={styles.secondaryButtonLabel}>Clear</Text>
+                </Pressable>
+                <Pressable onPress={applyGenrePickerSelection} style={styles.primaryButton}>
+                  <Text style={styles.primaryButtonLabel}>Done</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {renderDuplicateWarningModal()}
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={isVaultStatusMenuOpen}
+          onRequestClose={() => setIsVaultStatusMenuOpen(false)}
+        >
+          <View style={styles.vaultFilterModalOverlay}>
+            <Pressable
+              style={styles.vaultFilterModalBackdrop}
+              onPress={() => setIsVaultStatusMenuOpen(false)}
+            />
+            <View style={styles.vaultFilterModalCard}>
+              {(["All", ...bookStatusOptions] as VaultStatusFilter[]).map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => handleVaultStatusFilterChange(option)}
+                  style={[
+                    styles.vaultFilterOption,
+                    vaultStatusFilter === option && styles.vaultFilterOptionActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.vaultFilterOptionLabel,
+                      vaultStatusFilter === option && styles.vaultFilterOptionLabelActive,
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          animationType="fade"
+          transparent
           visible={selectedVaultBook !== null}
           onRequestClose={closeVaultBookModal}
         >
@@ -942,6 +1394,16 @@ export default function App() {
                     <Text style={styles.vaultModalAuthor}>
                       {isVaultModalEditing ? vaultModalDraft.author || "Unknown author" : selectedVaultBook.author}
                     </Text>
+                    <Text style={styles.vaultModalEdition}>
+                      {isVaultModalEditing
+                        ? vaultModalDraft.edition || ""
+                        : selectedVaultBook.edition || ""}
+                    </Text>
+                    <Text style={styles.vaultModalEdition}>
+                      {isVaultModalEditing
+                        ? vaultModalDraft.genre || ""
+                        : selectedVaultBook.genre || ""}
+                    </Text>
 
 
                   </View>
@@ -972,6 +1434,34 @@ export default function App() {
                         placeholder="Author"
                         placeholderTextColor="#8E7C66"
                       />
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Edition</Text>
+                      <TextInput
+                        value={vaultModalDraft.edition}
+                        onChangeText={(value) =>
+                          setVaultModalDraft((current) => ({ ...current, edition: value }))
+                        }
+                        style={styles.vaultModalInput}
+                        placeholder="Edition"
+                        placeholderTextColor="#8E7C66"
+                      />
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Genre</Text>
+                      <Pressable
+                        onPress={() => openGenrePicker("vault")}
+                        style={styles.genrePickerButton}
+                      >
+                        <Text
+                          style={[
+                            styles.genrePickerLabel,
+                            !vaultModalDraft.genre && styles.genrePickerPlaceholder,
+                          ]}
+                        >
+                          {getGenrePickerLabel(vaultModalDraft.genre)}
+                        </Text>
+                      </Pressable>
                     </View>
                     <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
                       <Text style={styles.vaultModalLabel}>Status</Text>
@@ -1048,6 +1538,14 @@ export default function App() {
                       <Text style={styles.vaultModalValue}>{selectedVaultBook.author}</Text>
                     </View>
                     <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Edition</Text>
+                      <Text style={styles.vaultModalValue}>{selectedVaultBook.edition || ""}</Text>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
+                      <Text style={styles.vaultModalLabel}>Genre</Text>
+                      <Text style={styles.vaultModalValue}>{selectedVaultBook.genre || ""}</Text>
+                    </View>
+                    <View style={[styles.vaultModalField, styles.vaultModalFieldCard]}>
                       <Text style={styles.vaultModalLabel}>Status</Text>
                       <View
                         style={[
@@ -1080,96 +1578,122 @@ export default function App() {
 
   if (screen === "manual") {
     return (
-      <SecondaryScreen title="Manual" onBack={() => setScreen("home")}>
-        <View style={styles.infoPanel}>
-          <Text style={styles.panelHeading}>Add a book manually</Text>
-          <Text style={styles.panelCopy}>
-            This page keeps the local insert flow alive while the home screen stays clean and minimal.
-          </Text>
-        </View>
+      <>
+        <SecondaryScreen title="Add Book" onBack={() => setScreen("home")}>
+          <Text style={styles.vaultSubtitle}>This book will be a fine addiction to my Vault!!!</Text>
 
-        <View style={styles.formPanel}>
-          <TextInput
-            placeholder="Title"
-            placeholderTextColor="#9AA7B8"
-            value={draft.title}
-            onChangeText={(value) => setDraft((current) => ({ ...current, title: value }))}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="Author"
-            placeholderTextColor="#9AA7B8"
-            value={draft.author}
-            onChangeText={(value) => setDraft((current) => ({ ...current, author: value }))}
-            style={styles.input}
-          />
-          <TextInput
-            placeholder="Notes"
-            placeholderTextColor="#9AA7B8"
-            value={draft.notes}
-            onChangeText={(value) => setDraft((current) => ({ ...current, notes: value }))}
-            style={[styles.input, styles.multilineInput]}
-            multiline
-          />
-          <View style={styles.statusSelector}>
-            {bookStatusOptions.map((statusOption) => (
-              <Pressable
-                key={statusOption}
-                onPress={() =>
-                  setDraft((current) => ({
-                    ...current,
-                    status: statusOption,
-                    bookmark: statusOption === "In progress" ? current.bookmark : "",
-                  }))
-                }
-                style={[
-                  styles.statusOptionButton,
-                  draft.status === statusOption && styles.statusOptionButtonActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusOptionLabel,
-                    draft.status === statusOption && styles.statusOptionLabelActive,
-                  ]}
-                >
-                  {statusOption}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          {draft.status === "In progress" ? (
+          <View style={styles.formPanel}>
             <TextInput
-              placeholder="Bookmark page"
+              placeholder="Title"
               placeholderTextColor="#9AA7B8"
-              value={draft.bookmark}
-              onChangeText={(value) =>
-                setDraft((current) => ({
-                  ...current,
-                  bookmark: value.replace(/[^0-9]/g, ""),
-                }))
-              }
-              keyboardType="number-pad"
+              value={draft.title}
+              onChangeText={(value) => setDraft((current) => ({ ...current, title: value }))}
               style={styles.input}
             />
-          ) : null}
-          <Pressable onPress={handleAddBook} style={styles.primaryButton} disabled={saving}>
-            <Text style={styles.primaryButtonLabel}>{saving ? "Saving..." : "Save to The Vault"}</Text>
-          </Pressable>
-        </View>
-      </SecondaryScreen>
+            <TextInput
+              placeholder="Author"
+              placeholderTextColor="#9AA7B8"
+              value={draft.author}
+              onChangeText={(value) => setDraft((current) => ({ ...current, author: value }))}
+              style={styles.input}
+            />
+            <TextInput
+              placeholder="Edition"
+              placeholderTextColor="#9AA7B8"
+              value={draft.edition}
+              onChangeText={(value) => setDraft((current) => ({ ...current, edition: value }))}
+              style={styles.input}
+            />
+            <Pressable onPress={() => openGenrePicker("manual")} style={styles.genrePickerButton}>
+              <Text
+                style={[
+                  styles.genrePickerLabel,
+                  !draft.genre && styles.genrePickerPlaceholder,
+                ]}
+              >
+                {getGenrePickerLabel(draft.genre)}
+              </Text>
+            </Pressable>
+            <TextInput
+              placeholder="Notes"
+              placeholderTextColor="#9AA7B8"
+              value={draft.notes}
+              onChangeText={(value) => setDraft((current) => ({ ...current, notes: value }))}
+              style={[styles.input, styles.multilineInput]}
+              multiline
+            />
+            <View style={styles.statusSelector}>
+              {bookStatusOptions.map((statusOption) => (
+                <Pressable
+                  key={statusOption}
+                  onPress={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      status: statusOption,
+                      bookmark: statusOption === "In progress" ? current.bookmark : "",
+                    }))
+                  }
+                  style={[
+                    styles.statusOptionButton,
+                    draft.status === statusOption && styles.statusOptionButtonActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusOptionLabel,
+                      draft.status === statusOption && styles.statusOptionLabelActive,
+                    ]}
+                  >
+                    {statusOption}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {draft.status === "In progress" ? (
+              <TextInput
+                placeholder="Bookmark page"
+                placeholderTextColor="#9AA7B8"
+                value={draft.bookmark}
+                onChangeText={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    bookmark: value.replace(/[^0-9]/g, ""),
+                  }))
+                }
+                keyboardType="number-pad"
+                style={styles.input}
+              />
+            ) : null}
+            <Pressable onPress={handleAddBook} style={styles.primaryButton} disabled={saving}>
+              <Text style={styles.primaryButtonLabel}>
+                {saving ? "Saving..." : "Save to The Vault"}
+              </Text>
+            </Pressable>
+          </View>
+        </SecondaryScreen>
+        {renderDuplicateWarningModal()}
+      </>
     );
   }
 
   return (
     <SecondaryScreen title="OCR" onBack={() => setScreen("home")}>
-      <View style={styles.emptyPanel}>
-        <Text style={styles.emptyTitle}>OCR is ready for later.</Text>
-        <Text style={styles.emptyText}>
-          When you decide what this area should do, we can wire it into search, scan, or visual exploration.
-        </Text>
-        <Text style={styles.assetHintCard}>Future icon path: {futureAssets.ocrButton}</Text>
-      </View>
+      <Text style={styles.vaultSubtitle}>Frame the page and let the camera do the first step.</Text>
+      {cameraPermission?.granted ? (
+        <View style={styles.ocrCameraCard}>
+          <CameraView facing="back" style={styles.ocrCameraPreview} />
+        </View>
+      ) : (
+        <View style={styles.emptyPanel}>
+          <Text style={styles.emptyTitle}>Camera access needed.</Text>
+          <Text style={styles.emptyText}>
+            Allow camera access to start scanning pages for OCR.
+          </Text>
+          <Pressable onPress={() => void requestCameraPermission()} style={styles.primaryButton}>
+            <Text style={styles.primaryButtonLabel}>Allow camera</Text>
+          </Pressable>
+        </View>
+      )}
     </SecondaryScreen>
   );
 }
@@ -1367,6 +1891,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(246, 231, 201, 0.08)",
   },
+  genrePickerButton: {
+    backgroundColor: "#261C13",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+  },
+  genrePickerLabel: {
+    color: "#FFF7EA",
+    fontSize: 15,
+  },
+  genrePickerPlaceholder: {
+    color: "#8E7C66",
+  },
   multilineInput: {
     minHeight: 110,
     textAlignVertical: "top",
@@ -1408,6 +1947,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#1A140E",
     gap: 10,
   },
+  ocrCameraCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    backgroundColor: "#1A140E",
+    overflow: "hidden",
+    minHeight: 420,
+  },
+  ocrCameraPreview: {
+    width: "100%",
+    minHeight: 420,
+    backgroundColor: "#120D09",
+  },
   emptyTitle: {
     color: "#FFF7EA",
     fontSize: 22,
@@ -1426,6 +1978,8 @@ const styles = StyleSheet.create({
   vaultToolbar: {
     gap: 12,
     backgroundColor: appChromeColor,
+    zIndex: 30,
+    elevation: 30,
   },
   vaultToolbarHeader: {
     flexDirection: "row",
@@ -1436,6 +1990,13 @@ const styles = StyleSheet.create({
   vaultToolbarWrap: {
     backgroundColor: appChromeColor,
     paddingBottom: 12,
+    position: "relative",
+    zIndex: 30,
+    elevation: 30,
+  },
+  vaultToolbarWrapRaised: {
+    zIndex: 80,
+    elevation: 80,
   },
   vaultDismissSurface: {
     alignSelf: "stretch",
@@ -1452,7 +2013,13 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     paddingHorizontal: 4,
   },
+  vaultSearchRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+  },
   vaultSearchInput: {
+    flex: 1,
     backgroundColor: "#261C13",
     color: "#FFF7EA",
     borderRadius: 18,
@@ -1461,8 +2028,246 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(246, 231, 201, 0.08)",
   },
+  vaultFilterWrap: {
+    position: "relative",
+    width: 118,
+    zIndex: 20,
+  },
+  vaultFilterWrapRaised: {
+    zIndex: 90,
+    elevation: 90,
+  },
+  vaultFilterButton: {
+    minHeight: 50,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    backgroundColor: "#261C13",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  vaultFilterLabel: {
+    flex: 1,
+    color: "#FFF7EA",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  vaultFilterCaret: {
+    display: "none",
+    color: "#C9A66B",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  vaultFilterMenu: {
+    display: "none",
+    position: "absolute",
+    top: 56,
+    right: 0,
+    width: 140,
+    padding: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    backgroundColor: "#1C150E",
+    gap: 4,
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  vaultFilterModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 5, 3, 0.56)",
+    paddingHorizontal: 24,
+    justifyContent: "center",
+  },
+  vaultFilterModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  vaultFilterModalCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 240,
+    padding: 10,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    backgroundColor: "#1C150E",
+    gap: 4,
+    shadowColor: "#000000",
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 20,
+  },
+  vaultFilterOption: {
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  vaultFilterOptionActive: {
+    backgroundColor: "rgba(209, 161, 87, 0.18)",
+  },
+  vaultFilterOptionLabel: {
+    color: "#D8C8AE",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  vaultFilterOptionLabelActive: {
+    color: "#FFF7EA",
+  },
+  genrePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 5, 3, 0.56)",
+    paddingHorizontal: 24,
+    justifyContent: "center",
+  },
+  genrePickerModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  genrePickerModalCard: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 320,
+    maxHeight: "72%",
+    paddingTop: 16,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    backgroundColor: "#1C150E",
+    shadowColor: "#000000",
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 20,
+  },
+  genrePickerModalHeader: {
+    marginBottom: 12,
+    gap: 4,
+  },
+  genrePickerModalTitle: {
+    color: "#FFF7EA",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  genrePickerModalSubtitle: {
+    color: "#A9987E",
+    fontSize: 13,
+  },
+  genrePickerModalList: {
+    flexGrow: 0,
+  },
+  genrePickerModalListContent: {
+    gap: 6,
+    paddingBottom: 4,
+  },
+  genrePickerOption: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: "#261C13",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+  },
+  genrePickerOptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  genrePickerOptionActive: {
+    borderColor: "#D1A157",
+    backgroundColor: "rgba(209, 161, 87, 0.18)",
+  },
+  genrePickerOptionLabel: {
+    color: "#D8C8AE",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  genrePickerOptionCheck: {
+    color: "#A9987E",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  genrePickerOptionLabelActive: {
+    color: "#FFF7EA",
+  },
+  genrePickerOptionCheckActive: {
+    color: "#F6E7C9",
+  },
+  genrePickerActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 14,
+  },
+  duplicateWarningCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.14)",
+    backgroundColor: "#140F0A",
+    padding: 18,
+    gap: 10,
+    shadowColor: "#000000",
+    shadowOpacity: 0.32,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 14,
+  },
+  duplicateWarningEyebrow: {
+    color: "#C9A66B",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  duplicateWarningTitle: {
+    color: "#FFF7EA",
+    fontSize: 24,
+    fontWeight: "800",
+  },
+  duplicateWarningText: {
+    color: "#D8C8AE",
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  duplicateWarningMeta: {
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "#1A140E",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    gap: 4,
+  },
+  duplicateWarningMetaLabel: {
+    color: "#FFF7EA",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  duplicateWarningMetaValue: {
+    color: "#A9987E",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  duplicateWarningActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 4,
+  },
   vaultTableHeaderWrap: {
     backgroundColor: appChromeColor,
+    position: "relative",
+    zIndex: 10,
+    elevation: 10,
   },
   vaultTableBody: {
     borderBottomLeftRadius: 24,
@@ -1484,6 +2289,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(246, 231, 201, 0.08)",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    zIndex: 10,
   },
   vaultHeaderCell: {
     color: "#E4D2B3",
@@ -1697,6 +2503,11 @@ const styles = StyleSheet.create({
     color: "#DCC8A7",
     fontSize: 15,
     lineHeight: 21,
+  },
+  vaultModalEdition: {
+    color: "#A9987E",
+    fontSize: 13,
+    lineHeight: 18,
   },
   vaultModalField: {
     gap: 6,

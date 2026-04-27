@@ -24,7 +24,7 @@ import { BookCard } from "./src/components/BookCard";
 import { createBook, fetchBooks, removeBook } from "./src/services/books";
 import type { Book } from "./src/types/book";
 
-type Screen = "home" | "vault" | "manual" | "look";
+type Screen = "home" | "vault" | "manual" | "ocr";
 type HomeBackgroundMode = "image" | "frames" | "video";
 
 const emptyDraft = {
@@ -60,7 +60,7 @@ const futureAssets = {
   homeBackgroundVideo: homeBackgroundVideoAssetPath,
   vaultButton: "assets/ui/button-vault.png",
   manualButton: "assets/ui/button-manual.png",
-  lookButton: "assets/ui/button-look.png",
+  ocrButton: "assets/ui/button-look.png",
 };
 
 type HomeVideoBackgroundProps = {
@@ -150,7 +150,7 @@ type SecondaryScreenProps = {
 function SecondaryScreen({
   title,
   onBack,
-  backPosition = "top",
+  backPosition = "bottom",
   children,
 }: SecondaryScreenProps) {
   const isBottomBackButton = backPosition === "bottom";
@@ -189,7 +189,7 @@ export default function App() {
   const [expandedButtons, setExpandedButtons] = useState({
     vault: false,
     manual: false,
-    look: false,
+    ocr: false,
   });
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
@@ -201,14 +201,14 @@ export default function App() {
 
   function collapseHomeButtons() {
     setExpandedButtons((current) => {
-      if (!current.vault && !current.manual && !current.look) {
+      if (!current.vault && !current.manual && !current.ocr) {
         return current;
       }
 
       return {
         vault: false,
         manual: false,
-        look: false,
+        ocr: false,
       };
     });
   }
@@ -249,7 +249,7 @@ export default function App() {
   }
 
   function handleHomeButtonPress(
-    target: "vault" | "manual" | "look",
+    target: "vault" | "manual" | "ocr",
     event: GestureResponderEvent
   ) {
     event.stopPropagation();
@@ -291,9 +291,10 @@ export default function App() {
 
       if (screen === "home") {
         await NavigationBar.setPositionAsync("absolute");
+        await NavigationBar.setBehaviorAsync("overlay-swipe");
         await NavigationBar.setBackgroundColorAsync("#00000000");
         await NavigationBar.setBorderColorAsync("#00000000");
-        await NavigationBar.setVisibilityAsync("hidden");
+        await NavigationBar.setVisibilityAsync("visible");
         return;
       }
 
@@ -414,15 +415,15 @@ export default function App() {
                   />
                   <MenuButton
                     isExpanded={expandedButtons.manual}
-                    label="Manual"
+                    label="Write"
                     tint="rgba(196, 181, 253, 0.45)"
                     onPress={(event) => handleHomeButtonPress("manual", event)}
                   />
                   <MenuButton
-                    isExpanded={expandedButtons.look}
-                    label="Look"
+                    isExpanded={expandedButtons.ocr}
+                    label="OCR"
                     tint="rgba(253, 230, 138, 0.45)"
-                    onPress={(event) => handleHomeButtonPress("look", event)}
+                    onPress={(event) => handleHomeButtonPress("ocr", event)}
                   />
                 </Animated.View>
               ) : null}
@@ -514,13 +515,13 @@ export default function App() {
   }
 
   return (
-    <SecondaryScreen title="Look" onBack={() => setScreen("home")}>
+    <SecondaryScreen title="OCR" onBack={() => setScreen("home")}>
       <View style={styles.emptyPanel}>
-        <Text style={styles.emptyTitle}>Look is ready for later.</Text>
+        <Text style={styles.emptyTitle}>OCR is ready for later.</Text>
         <Text style={styles.emptyText}>
           When you decide what this area should do, we can wire it into search, scan, or visual exploration.
         </Text>
-        <Text style={styles.assetHintCard}>Future icon path: {futureAssets.lookButton}</Text>
+        <Text style={styles.assetHintCard}>Future icon path: {futureAssets.ocrButton}</Text>
       </View>
     </SecondaryScreen>
   );
@@ -577,7 +578,7 @@ const styles = StyleSheet.create({
     height: 120,
   },
   menuStack: {
-    marginTop: 400,
+    marginTop: 430,
     gap: 40,
     alignItems: "flex-start",
   },
@@ -652,12 +653,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   screenContent: {
-    paddingBottom: 28,
+    paddingBottom: 120,
     gap: 16,
   },
   bottomBackButton: {
-    alignSelf: "flex-start",
-    marginTop: 8,
+    position: "absolute",
+    left: 20,
+    bottom: 50,
   },
   infoPanel: {
     padding: 18,

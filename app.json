@@ -17,6 +17,7 @@
           "backgroundColor": "#00000000",
           "barStyle": "light",
           "borderColor": "#00000000",
+          "behavior": "overlay-swipe",
           "position": "absolute",
           "visibility": "visible"
         }
@@ -24,6 +25,11 @@
       "expo-video",
       "expo-sqlite"
     ],
+    "androidStatusBar": {
+      "backgroundColor": "#00000000",
+      "barStyle": "light-content",
+      "translucent": true
+    },
     "assetBundlePatterns": [
       "**/*"
     ]

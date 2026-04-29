@@ -26,7 +26,9 @@ import {
 } from "react-native";
 import type { RefreshControlProps } from "react-native";
 import { createBook, fetchBooks, removeBook, updateBook } from "./src/services/books";
+import { extractBooksFromCoverImage, resolveOcrVaultMatch } from "./src/services/ocr";
 import type { Book, BookStatus } from "./src/types/book";
+import type { OcrCandidate, OcrConfidence, OcrMatchType } from "./src/types/ocr";
 
 type Screen = "home" | "vault" | "manual" | "ocr";
 type HomeBackgroundMode = "image" | "frames" | "video";
@@ -34,6 +36,13 @@ type VaultSortKey = "title" | "author";
 type VaultSortDirection = "asc" | "desc";
 type VaultStatusFilter = "All" | BookStatus;
 type GenrePickerTarget = "manual" | "vault" | null;
+type OcrRowStatus = "review" | "added";
+
+type OcrReviewRow = OcrCandidate & {
+  rowStatus: OcrRowStatus;
+  isSaving: boolean;
+  errorMessage: string;
+};
 
 const bookStatusOptions: BookStatus[] = ["In progress", "Read", "Not Read"];
 const literaryGenreOptions = [
@@ -389,17 +398,21 @@ function SwipeableVaultRow({
         ]}
       >
         <Pressable onPress={() => onSelect(book)} style={styles.vaultRowPressable}>
-          <View style={styles.vaultTitleColumn}>
-            <Text numberOfLines={2} style={styles.vaultCellPrimary}>
-              {book.title}
-            </Text>
+          <View style={styles.vaultRowTop}>
+            <View style={styles.vaultTitleColumn}>
+              <Text numberOfLines={2} style={styles.vaultCellPrimary}>
+                {book.title}
+              </Text>
+            </View>
+            <View style={styles.vaultAuthorColumn}>
+              <Text numberOfLines={2} style={styles.vaultCellValue}>
+                {book.author}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.vaultGenreRow}>
             <Text numberOfLines={1} style={styles.vaultCellSecondary}>
               {book.genre || ""}
-            </Text>
-          </View>
-          <View style={styles.vaultAuthorColumn}>
-            <Text numberOfLines={2} style={styles.vaultCellValue}>
-              {book.author}
             </Text>
           </View>
         </Pressable>
@@ -442,9 +455,13 @@ export default function App() {
   const [genrePickerSelection, setGenrePickerSelection] = useState<string[]>([]);
   const [duplicateBookWarningTarget, setDuplicateBookWarningTarget] = useState<Book | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [ocrRows, setOcrRows] = useState<OcrReviewRow[]>([]);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [isOcrCameraReady, setIsOcrCameraReady] = useState(false);
   const homeButtonsAnimation = useRef(
     new Animated.Value(areHomeButtonsInitiallyVisible ? 1 : 0)
   ).current;
+  const ocrCameraRef = useRef<CameraView | null>(null);
 
   function collapseHomeButtons() {
     setExpandedButtons((current) => {
@@ -767,6 +784,177 @@ export default function App() {
     setDuplicateBookWarningTarget(book);
   }
 
+  function getOcrRowMatch(row: Pick<OcrReviewRow, "title" | "author" | "edition">) {
+    return resolveOcrVaultMatch(row, books);
+  }
+
+  function getOcrMatchTone(matchType: OcrMatchType) {
+    switch (matchType) {
+      case "exact":
+        return {
+          label: "Gia presente nel Vault",
+          containerStyle: styles.ocrResultDuplicate,
+          badgeStyle: styles.ocrResultDuplicateBadge,
+          badgeLabelStyle: styles.ocrResultDuplicateBadgeLabel,
+        };
+      case "title-author":
+        return {
+          label: "Possibile match nel Vault",
+          containerStyle: styles.ocrResultPossibleDuplicate,
+          badgeStyle: styles.ocrResultPossibleDuplicateBadge,
+          badgeLabelStyle: styles.ocrResultPossibleDuplicateBadgeLabel,
+        };
+      default:
+        return {
+          label: "Nuovo libro",
+          containerStyle: styles.ocrResultNew,
+          badgeStyle: styles.ocrResultNewBadge,
+          badgeLabelStyle: styles.ocrResultNewBadgeLabel,
+        };
+    }
+  }
+
+  function getOcrConfidenceLabel(confidence: OcrConfidence) {
+    switch (confidence) {
+      case "high":
+        return "Alta";
+      case "medium":
+        return "Media";
+      default:
+        return "Bassa";
+    }
+  }
+
+  function updateOcrRow(id: string, updater: (row: OcrReviewRow) => OcrReviewRow) {
+    setOcrRows((current) => current.map((row) => (row.id === id ? updater(row) : row)));
+  }
+
+  function handleOcrRowFieldChange(
+    id: string,
+    field: "title" | "author" | "edition" | "genre",
+    value: string
+  ) {
+    updateOcrRow(id, (row) => ({
+      ...row,
+      [field]: value,
+      errorMessage: "",
+    }));
+  }
+
+  function resetOcrSession() {
+    setOcrRows([]);
+    setIsOcrProcessing(false);
+  }
+
+  async function handleRunOcrExtraction() {
+    if (!cameraPermission?.granted) {
+      Alert.alert("Camera unavailable", "Allow camera access before starting the OCR flow.");
+      return;
+    }
+
+    if (!ocrCameraRef.current || !isOcrCameraReady) {
+      Alert.alert("Camera not ready", "Wait a moment for the preview to initialize and try again.");
+      return;
+    }
+
+    try {
+      setIsOcrProcessing(true);
+      const capturedImage = await ocrCameraRef.current.takePictureAsync({
+        quality: 0.7,
+        shutterSound: false,
+      });
+      const extractedBooks = await extractBooksFromCoverImage(
+        {
+          uri: capturedImage.uri,
+          width: capturedImage.width,
+          height: capturedImage.height,
+          format: capturedImage.format,
+          capturedAt: Date.now(),
+        },
+        books
+      );
+      setOcrRows(
+        extractedBooks.map((candidate) => ({
+          ...candidate,
+          rowStatus: "review",
+          isSaving: false,
+          errorMessage: "",
+        }))
+      );
+    } catch (error) {
+      Alert.alert(
+        "OCR unavailable",
+        error instanceof Error ? error.message : "Unknown OCR extraction error"
+      );
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  }
+
+  async function handleAddOcrRowToVault(rowId: string) {
+    const row = ocrRows.find((currentRow) => currentRow.id === rowId);
+
+    if (!row) {
+      return;
+    }
+
+    if (!row.title.trim() || !row.author.trim()) {
+      updateOcrRow(rowId, (currentRow) => ({
+        ...currentRow,
+        errorMessage: "Titolo e autore sono obbligatori prima del salvataggio.",
+      }));
+      return;
+    }
+
+    const match = getOcrRowMatch(row);
+    if (match.matchType === "exact" && match.matchedBook) {
+      showDuplicateBookWarning(match.matchedBook);
+      return;
+    }
+
+    updateOcrRow(rowId, (currentRow) => ({
+      ...currentRow,
+      isSaving: true,
+      errorMessage: "",
+    }));
+
+    try {
+      await createBook({
+        title: row.title.trim(),
+        author: row.author.trim(),
+        edition: row.edition.trim(),
+        genre: row.genre.trim(),
+        notes: "",
+        status: "Not Read",
+      });
+
+      await refreshBooks({ showLoading: false });
+
+      updateOcrRow(rowId, (currentRow) => ({
+        ...currentRow,
+        rowStatus: "added",
+        isSaving: false,
+        errorMessage: "",
+      }));
+    } catch (error) {
+      updateOcrRow(rowId, (currentRow) => ({
+        ...currentRow,
+        isSaving: false,
+        errorMessage: error instanceof Error ? error.message : "Save failed",
+      }));
+    }
+  }
+
+  function handleOpenOcrMatchedBook(row: OcrReviewRow) {
+    const match = getOcrRowMatch(row);
+
+    if (!match.matchedBook) {
+      return;
+    }
+
+    openExistingBookCard(match.matchedBook);
+  }
+
   function renderDuplicateWarningModal() {
     return (
       <Modal
@@ -844,6 +1032,17 @@ export default function App() {
   const hasVisibleBooks = !loading && books.length > 0 && visibleBooks.length > 0;
   const selectedVaultBook =
     selectedVaultBookId !== null ? books.find((book) => book.id === selectedVaultBookId) ?? null : null;
+  const ocrRowsWithMatch = ocrRows.map((row) => ({
+    row,
+    match: getOcrRowMatch(row),
+  }));
+  const exactOcrMatchesCount = ocrRowsWithMatch.filter(
+    ({ match }) => match.matchType === "exact"
+  ).length;
+  const possibleOcrMatchesCount = ocrRowsWithMatch.filter(
+    ({ match }) => match.matchType === "title-author"
+  ).length;
+  const newOcrRowsCount = ocrRowsWithMatch.filter(({ match }) => match.matchType === "none").length;
 
   useEffect(() => {
     if (!selectedVaultBook) {
@@ -1678,10 +1877,42 @@ export default function App() {
 
   return (
     <SecondaryScreen title="OCR" onBack={() => setScreen("home")}>
-      <Text style={styles.vaultSubtitle}>Frame the page and let the camera do the first step.</Text>
+      <Text style={styles.vaultSubtitle}>
+        Scansiona una o piu copertine, controlla i campi estratti e aggiungi solo i libri che vuoi
+        davvero salvare.
+      </Text>
+      <View style={styles.infoPanel}>
+        <Text style={styles.panelHeading}>Flusso OCR</Text>
+        <Text style={styles.panelCopy}>
+          1. Scattiamo una foto e la lasciamo in cache temporanea. 2. Passiamo l&apos;immagine alla
+          pipeline OCR per estrarre i campi di ogni copertina. 3. Incrociamo ogni riga con il
+          Vault usando titolo, autore ed edizione, mantenendo il confronto visivo che avete gia.
+        </Text>
+        <Text style={styles.panelCopy}>
+          Il campo genere rimane vuoto per ora, cosi possiamo completarlo piu avanti con una
+          ricerca dedicata.
+        </Text>
+      </View>
       {cameraPermission?.granted ? (
         <View style={styles.ocrCameraCard}>
-          <CameraView facing="back" style={styles.ocrCameraPreview} />
+          <CameraView
+            ref={ocrCameraRef}
+            facing="back"
+            style={styles.ocrCameraPreview}
+            onCameraReady={() => setIsOcrCameraReady(true)}
+          />
+          <View pointerEvents="none" style={styles.ocrGuideFrame}>
+            <View style={[styles.ocrGuideCorner, styles.ocrGuideCornerTopLeft]} />
+            <View style={[styles.ocrGuideCorner, styles.ocrGuideCornerTopRight]} />
+            <View style={[styles.ocrGuideCorner, styles.ocrGuideCornerBottomLeft]} />
+            <View style={[styles.ocrGuideCorner, styles.ocrGuideCornerBottomRight]} />
+          </View>
+          <View style={styles.ocrCameraOverlay}>
+            <Text style={styles.ocrCameraOverlayTitle}>Allinea la copertina dentro la guida</Text>
+            <Text style={styles.ocrCameraOverlayText}>
+              Puoi inquadrare uno o piu libri insieme
+            </Text>
+          </View>
         </View>
       ) : (
         <View style={styles.emptyPanel}>
@@ -1694,6 +1925,174 @@ export default function App() {
           </Pressable>
         </View>
       )}
+      <View style={styles.formPanel}>
+        <Text style={styles.panelHeading}>Sessione di estrazione</Text>
+        <Text style={styles.panelCopy}>
+          Per adesso il motore OCR usa un adapter mockato: il flusso completo e il confronto col
+          Vault sono gia pronti, cosi il vero OCR si potra innestare qui senza rifare l’interfaccia.
+        </Text>
+        <View style={styles.ocrActionRow}>
+          <Pressable
+            onPress={() => void handleRunOcrExtraction()}
+            style={[styles.primaryButton, styles.ocrPrimaryAction]}
+            disabled={isOcrProcessing || !isOcrCameraReady}
+          >
+            <Text style={styles.primaryButtonLabel}>
+              {isOcrProcessing
+                ? "Scatto e analisi in corso..."
+                : isOcrCameraReady
+                  ? "Scatta e analizza"
+                  : "Avvio camera..."}
+            </Text>
+          </Pressable>
+          {ocrRows.length > 0 ? (
+            <Pressable onPress={resetOcrSession} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonLabel}>Resetta sessione</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+      {isOcrProcessing ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator color="#E2C38B" />
+          <Text style={styles.loadingText}>Sto preparando le righe OCR da revisionare.</Text>
+        </View>
+      ) : null}
+      {ocrRows.length > 0 ? (
+        <View style={styles.formPanel}>
+          <Text style={styles.panelHeading}>Review estrazione</Text>
+          <Text style={styles.panelCopy}>
+            {ocrRows.length} righe trovate. {exactOcrMatchesCount} gia nel Vault,{" "}
+            {possibleOcrMatchesCount} da verificare, {newOcrRowsCount} nuove.
+          </Text>
+          <View style={styles.ocrLegendRow}>
+            <View style={[styles.ocrLegendChip, styles.ocrLegendDuplicateChip]}>
+              <Text style={styles.ocrLegendLabel}>Gia presente</Text>
+            </View>
+            <View style={[styles.ocrLegendChip, styles.ocrLegendPossibleChip]}>
+              <Text style={styles.ocrLegendLabel}>Possibile match</Text>
+            </View>
+            <View style={[styles.ocrLegendChip, styles.ocrLegendNewChip]}>
+              <Text style={styles.ocrLegendLabel}>Nuovo</Text>
+            </View>
+          </View>
+          {ocrRowsWithMatch.map(({ row, match }) => {
+            const tone = getOcrMatchTone(match.matchType);
+
+            return (
+              <View
+                key={row.id}
+                style={[
+                  styles.ocrResultCard,
+                  tone.containerStyle,
+                  row.rowStatus === "added" && styles.ocrResultAdded,
+                ]}
+              >
+                <View style={styles.ocrResultHeader}>
+                  <View style={styles.ocrResultHeaderCopy}>
+                    <Text style={styles.ocrResultSource}>{row.sourceLabel}</Text>
+                    <Text style={styles.ocrResultConfidence}>
+                      Confidenza OCR: {getOcrConfidenceLabel(row.confidence)}
+                    </Text>
+                  </View>
+                  <View style={[styles.ocrResultBadge, tone.badgeStyle]}>
+                    <Text style={[styles.ocrResultBadgeLabel, tone.badgeLabelStyle]}>
+                      {row.rowStatus === "added" ? "Aggiunto" : tone.label}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.ocrFieldGroup}>
+                  <Text style={styles.vaultModalLabel}>Titolo</Text>
+                  <TextInput
+                    value={row.title}
+                    onChangeText={(value) => handleOcrRowFieldChange(row.id, "title", value)}
+                    placeholder="Titolo"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultModalInput}
+                    editable={!row.isSaving && row.rowStatus !== "added"}
+                  />
+                </View>
+                <View style={styles.ocrFieldGroup}>
+                  <Text style={styles.vaultModalLabel}>Autore</Text>
+                  <TextInput
+                    value={row.author}
+                    onChangeText={(value) => handleOcrRowFieldChange(row.id, "author", value)}
+                    placeholder="Autore"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultModalInput}
+                    editable={!row.isSaving && row.rowStatus !== "added"}
+                  />
+                </View>
+                <View style={styles.ocrFieldGroup}>
+                  <Text style={styles.vaultModalLabel}>Edizione</Text>
+                  <TextInput
+                    value={row.edition}
+                    onChangeText={(value) => handleOcrRowFieldChange(row.id, "edition", value)}
+                    placeholder="Edizione"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultModalInput}
+                    editable={!row.isSaving && row.rowStatus !== "added"}
+                  />
+                </View>
+                <View style={styles.ocrFieldGroup}>
+                  <Text style={styles.vaultModalLabel}>Genere</Text>
+                  <TextInput
+                    value={row.genre}
+                    onChangeText={(value) => handleOcrRowFieldChange(row.id, "genre", value)}
+                    placeholder="Lasciato vuoto per ora"
+                    placeholderTextColor="#8E7C66"
+                    style={styles.vaultModalInput}
+                    editable={!row.isSaving && row.rowStatus !== "added"}
+                  />
+                </View>
+                {match.matchedBook ? (
+                  <View style={styles.ocrMatchInfoCard}>
+                    <Text style={styles.ocrMatchInfoTitle}>
+                      {match.matchType === "exact"
+                        ? "Match trovato nel Vault"
+                        : "Possibile libro gia presente"}
+                    </Text>
+                    <Text style={styles.ocrMatchInfoText}>
+                      {match.matchedBook.title} · {match.matchedBook.author}
+                    </Text>
+                    <Text style={styles.ocrMatchInfoText}>
+                      {match.matchedBook.edition || "Edizione non valorizzata"}
+                    </Text>
+                  </View>
+                ) : null}
+                {row.errorMessage ? (
+                  <Text style={styles.ocrErrorText}>{row.errorMessage}</Text>
+                ) : null}
+                <View style={styles.ocrResultActions}>
+                  {match.matchedBook ? (
+                    <Pressable
+                      onPress={() => handleOpenOcrMatchedBook(row)}
+                      style={styles.secondaryButton}
+                    >
+                      <Text style={styles.secondaryButtonLabel}>Apri nel Vault</Text>
+                    </Pressable>
+                  ) : null}
+                  {row.rowStatus !== "added" ? (
+                    <Pressable
+                      onPress={() => void handleAddOcrRowToVault(row.id)}
+                      style={styles.primaryButton}
+                      disabled={row.isSaving}
+                    >
+                      <Text style={styles.primaryButtonLabel}>
+                        {row.isSaving ? "Salvataggio..." : "Aggiungi al Vault"}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <View style={styles.ocrSavedPill}>
+                      <Text style={styles.ocrSavedPillLabel}>Salvato</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
     </SecondaryScreen>
   );
 }
@@ -1959,6 +2358,232 @@ const styles = StyleSheet.create({
     width: "100%",
     minHeight: 420,
     backgroundColor: "#120D09",
+  },
+  ocrGuideFrame: {
+    position: "absolute",
+    top: 52,
+    left: 28,
+    right: 28,
+    bottom: 92,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.18)",
+    backgroundColor: "rgba(246, 231, 201, 0.03)",
+  },
+  ocrGuideCorner: {
+    position: "absolute",
+    width: 34,
+    height: 34,
+    borderColor: "#F6E7C9",
+  },
+  ocrGuideCornerTopLeft: {
+    top: 14,
+    left: 14,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 14,
+  },
+  ocrGuideCornerTopRight: {
+    top: 14,
+    right: 14,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 14,
+  },
+  ocrGuideCornerBottomLeft: {
+    bottom: 14,
+    left: 14,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 14,
+  },
+  ocrGuideCornerBottomRight: {
+    right: 14,
+    bottom: 14,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 14,
+  },
+  ocrCameraOverlay: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(20, 15, 10, 0.82)",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    gap: 4,
+  },
+  ocrCameraOverlayTitle: {
+    color: "#FFF7EA",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  ocrCameraOverlayText: {
+    color: "#D8C8AE",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  ocrActionRow: {
+    gap: 10,
+  },
+  ocrPrimaryAction: {
+    alignSelf: "stretch",
+  },
+  ocrLegendRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  ocrLegendChip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+  },
+  ocrLegendDuplicateChip: {
+    backgroundColor: "rgba(153, 27, 27, 0.18)",
+    borderColor: "rgba(248, 113, 113, 0.28)",
+  },
+  ocrLegendPossibleChip: {
+    backgroundColor: "rgba(180, 83, 9, 0.18)",
+    borderColor: "rgba(251, 191, 36, 0.28)",
+  },
+  ocrLegendNewChip: {
+    backgroundColor: "rgba(6, 95, 70, 0.18)",
+    borderColor: "rgba(74, 222, 128, 0.24)",
+  },
+  ocrLegendLabel: {
+    color: "#FFF7EA",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  ocrResultCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+  },
+  ocrResultDuplicate: {
+    backgroundColor: "rgba(67, 14, 18, 0.58)",
+    borderColor: "rgba(248, 113, 113, 0.22)",
+  },
+  ocrResultPossibleDuplicate: {
+    backgroundColor: "rgba(66, 32, 7, 0.56)",
+    borderColor: "rgba(251, 191, 36, 0.24)",
+  },
+  ocrResultNew: {
+    backgroundColor: "rgba(14, 43, 31, 0.56)",
+    borderColor: "rgba(74, 222, 128, 0.22)",
+  },
+  ocrResultAdded: {
+    backgroundColor: "rgba(19, 39, 51, 0.72)",
+    borderColor: "rgba(125, 211, 252, 0.22)",
+  },
+  ocrResultHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  ocrResultHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  ocrResultSource: {
+    color: "#FFF7EA",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  ocrResultConfidence: {
+    color: "#D8C8AE",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  ocrResultBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+  },
+  ocrResultDuplicateBadge: {
+    backgroundColor: "rgba(127, 29, 29, 0.28)",
+    borderColor: "rgba(248, 113, 113, 0.24)",
+  },
+  ocrResultDuplicateBadgeLabel: {
+    color: "#FECACA",
+  },
+  ocrResultPossibleDuplicateBadge: {
+    backgroundColor: "rgba(146, 64, 14, 0.28)",
+    borderColor: "rgba(251, 191, 36, 0.24)",
+  },
+  ocrResultPossibleDuplicateBadgeLabel: {
+    color: "#FDE68A",
+  },
+  ocrResultNewBadge: {
+    backgroundColor: "rgba(6, 95, 70, 0.28)",
+    borderColor: "rgba(74, 222, 128, 0.24)",
+  },
+  ocrResultNewBadgeLabel: {
+    color: "#BBF7D0",
+  },
+  ocrResultBadgeLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  ocrFieldGroup: {
+    gap: 6,
+  },
+  ocrMatchInfoCard: {
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(11, 9, 7, 0.24)",
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.08)",
+    gap: 4,
+  },
+  ocrMatchInfoTitle: {
+    color: "#FFF7EA",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  ocrMatchInfoText: {
+    color: "#D8C8AE",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  ocrErrorText: {
+    color: "#FCA5A5",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+  ocrResultActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  ocrSavedPill: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(125, 211, 252, 0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(125, 211, 252, 0.24)",
+  },
+  ocrSavedPillLabel: {
+    color: "#E0F2FE",
+    fontSize: 12,
+    fontWeight: "800",
   },
   emptyTitle: {
     color: "#FFF7EA",
@@ -2342,11 +2967,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   vaultRowPressable: {
-    flexDirection: "row",
-    alignItems: "center",
+    gap: 5,
     paddingHorizontal: 16,
     paddingVertical: 16,
+  },
+  vaultRowTop: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
+  },
+  vaultGenreRow: {
+    minHeight: 18,
   },
   vaultTitleColumn: {
     flex: 1.4,

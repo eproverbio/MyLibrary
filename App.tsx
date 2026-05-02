@@ -133,6 +133,7 @@ const emptyDraft = {
 
 const homeBackgroundImage = require("./assets/ui/home-background.png");
 const homeLogoImage = require("./assets/ui/logo-mylibrary.png");
+const rewardCoinPreviewImage = require("./assets_pipeline/outputs/png/coin_icon.png");
 const isHomeLogoVisible = false;
 const homeBackgroundMode: HomeBackgroundMode = "image";
 const isHomeBackgroundAnimationEnabled = false;
@@ -159,6 +160,8 @@ const futureAssets = {
   vaultButton: "assets/ui/button-vault.png",
   manualButton: "assets/ui/button-manual.png",
   ocrButton: "assets/ui/button-look.png",
+  rewardCoinPreview: "assets_pipeline/outputs/png/coin_icon.png",
+  rewardCoinModelAndroid: "android/app/src/main/assets/models/coin.glb",
 };
 
 function parseGenreValue(value: string) {
@@ -1184,6 +1187,22 @@ export default function App() {
                 ) : null}
               </View>
 
+              <View style={styles.generatedAssetCard}>
+                <Image
+                  source={rewardCoinPreviewImage}
+                  resizeMode="contain"
+                  style={styles.generatedAssetPreview}
+                />
+                <View style={styles.generatedAssetCopy}>
+                  <Text style={styles.generatedAssetEyebrow}>Generated asset</Text>
+                  <Text style={styles.generatedAssetTitle}>Reward Coin</Text>
+                  <Text style={styles.generatedAssetBody}>
+                    PNG preview loaded in React Native. Matching GLB exported to Android native
+                    assets for future 3D use.
+                  </Text>
+                </View>
+              </View>
+
               {areHomeButtonsRendered ? (
                 <Animated.View style={[styles.menuStack, menuStackAnimatedStyle]}>
                   <MenuButton
@@ -2147,8 +2166,47 @@ const styles = StyleSheet.create({
     width: 250,
     height: 120,
   },
+  generatedAssetCard: {
+    marginTop: 18,
+    alignSelf: "flex-end",
+    maxWidth: 252,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(246, 231, 201, 0.12)",
+    backgroundColor: "rgba(20, 15, 10, 0.76)",
+  },
+  generatedAssetPreview: {
+    width: 54,
+    height: 54,
+  },
+  generatedAssetCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  generatedAssetEyebrow: {
+    color: "#D1A157",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  generatedAssetTitle: {
+    color: "#FFF7EA",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  generatedAssetBody: {
+    color: "#CBB89A",
+    fontSize: 12,
+    lineHeight: 17,
+  },
   menuStack: {
-    marginTop: 430,
+    marginTop: 360,
     gap: 40,
     alignItems: "flex-start",
   },

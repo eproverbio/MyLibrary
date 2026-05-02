@@ -1,9 +1,14 @@
 export type {
+  OcrBoundingBox,
   OcrCandidate,
   OcrCapturedImage,
   OcrConfidence,
+  OcrDetectedCover,
   OcrEngineResult,
+  OcrLineRole,
   OcrMatchType,
-  OcrRecognizedCover,
+  OcrParsedFields,
+  OcrProvider,
+  OcrTextLine,
   OcrVaultMatch,
 } from "../services/ocr";

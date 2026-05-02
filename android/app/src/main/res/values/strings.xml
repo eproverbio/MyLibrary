@@ -1,0 +1,7 @@
+<resources>
+  <string name="app_name">MyLibrary</string>
+  <string name="expo_navigation_bar_border_color" translatable="false">-15725304</string>
+  <string name="expo_navigation_bar_visibility" translatable="false">visible</string>
+  <string name="expo_navigation_bar_position" translatable="false">absolute</string>
+  <string name="expo_navigation_bar_behavior" translatable="false">overlay-swipe</string>
+</resources>

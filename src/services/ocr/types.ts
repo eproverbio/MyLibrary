@@ -2,6 +2,14 @@ import type { Book } from "../../types/book";
 
 export type OcrConfidence = "high" | "medium" | "low";
 export type OcrMatchType = "exact" | "title-author" | "none";
+export type OcrLineRole = "title" | "author" | "edition" | "publisher" | "other";
+
+export type OcrBoundingBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type OcrCapturedImage = {
   uri: string;
@@ -9,6 +17,35 @@ export type OcrCapturedImage = {
   height: number;
   format: "jpg" | "png";
   capturedAt: number;
+};
+
+export type OcrTextLine = {
+  id: string;
+  text: string;
+  boundingBox: OcrBoundingBox;
+  confidence: OcrConfidence;
+};
+
+export type OcrDetectedCover = {
+  id: string;
+  sourceLabel: string;
+  boundingBox: OcrBoundingBox;
+  confidence: OcrConfidence;
+  lines: OcrTextLine[];
+};
+
+export type OcrParsedFields = {
+  title: string;
+  author: string;
+  edition: string;
+  genre: string;
+  publisher?: string;
+  confidence: OcrConfidence;
+  rawText?: string;
+  assignedRoles: Array<{
+    lineId: string;
+    role: OcrLineRole;
+  }>;
 };
 
 export type OcrCandidate = {
@@ -22,6 +59,8 @@ export type OcrCandidate = {
   rawText?: string;
   imageUri: string;
   capturedAt: number;
+  coverBoundingBox?: OcrBoundingBox;
+  recognizedLines: OcrTextLine[];
 };
 
 export type OcrVaultMatch = {
@@ -29,17 +68,15 @@ export type OcrVaultMatch = {
   matchedBook: Book | null;
 };
 
-export type OcrRecognizedCover = {
-  title: string;
-  author: string;
-  edition: string;
-  genre: string;
-  sourceLabel: string;
-  confidence: OcrConfidence;
-  rawText?: string;
-};
-
 export type OcrEngineResult = {
   engineName: string;
-  covers: OcrRecognizedCover[];
+  covers: OcrDetectedCover[];
+};
+
+export type OcrProvider = {
+  engineName: string;
+  analyzeCapturedImage: (
+    image: OcrCapturedImage,
+    existingBooks: Book[]
+  ) => Promise<OcrEngineResult>;
 };

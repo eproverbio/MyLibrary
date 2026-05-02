@@ -5,7 +5,6 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "mylibrary",
-    "userInterfaceStyle": "automatic",
     "platforms": [
       "ios",
       "android"
@@ -14,9 +13,9 @@
       [
         "expo-navigation-bar",
         {
-          "backgroundColor": "#00000000",
+          "backgroundColor": "#100D08",
           "barStyle": "light",
-          "borderColor": "#00000000",
+          "borderColor": "#100D08",
           "behavior": "overlay-swipe",
           "position": "absolute",
           "visibility": "visible"
@@ -28,16 +27,25 @@
           "cameraPermission": "Allow MyLibrary to access your camera for OCR scanning."
         }
       ],
+      "expo-dev-client",
+      "react-native-fast-tflite",
       "expo-video",
       "expo-sqlite"
     ],
     "androidStatusBar": {
-      "backgroundColor": "#00000000",
+      "backgroundColor": "#100D08",
       "barStyle": "light-content",
       "translucent": true
     },
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.mylibrary"
+    }
   }
 }

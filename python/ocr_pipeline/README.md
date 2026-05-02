@@ -1,15 +1,14 @@
-# OCR pipeline
+# Python support
 
-Questa cartella contiene la pipeline OCR lato Python, separata dalla UI React Native.
+Questa cartella resta utile, ma non e piu il punto centrale della pipeline mobile.
 
-Oggi l'app Expo usa ancora un adapter mockato in TypeScript, perche Python non puo girare
-direttamente dentro il runtime mobile. Il contratto dati pero e gia allineato:
+Con l'architettura Android consigliata:
 
-1. La UI scatta una foto.
-2. Expo salva temporaneamente l'immagine in cache e passa l'URI all'adapter OCR.
-3. L'adapter inviera lo stesso payload JSON a questo servizio Python quando collegheremo il
-   motore reale.
-4. La risposta contiene una lista di copertine riconosciute con i campi da confrontare col Vault.
+- nell'app girano `ML Kit Text Recognition` e un modello `YOLOv8n.tflite`
+- Python serve fuori dall'app per training, dataset prep, export TFLite e test offline
+
+Questi script quindi rappresentano il lato laboratorio/prototipazione, non il runtime finale
+su telefono.
 
 Esempio di esecuzione locale:
 
